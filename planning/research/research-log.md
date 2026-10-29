@@ -1,4 +1,4 @@
-# P0.5 research log
+# Rivet research log
 
 Research date: **30 October 2026, Asia/Singapore**. This is a substantive summary of evidence and reasoning, not a copy of entire upstream pages. Sources and snapshot metadata are retained in the [source register](source-register.md). Architectural recommendations remain proposals; no implementation was authorized or performed.
 
@@ -65,3 +65,36 @@ Checks performed:
 No repository Markdown lint/build tooling exists, and none was installed. No application test/build, live inference, desktop/browser exercise, model benchmark or dependency/advisory scan was run. Those remain proposed future acceptance checks. D01–D15, artifact-specific dependency/licensing verification, complete historical inventory and platform/recovery measurements remain unresolved; the documentation does not claim otherwise.
 
 The local P0.5 commit is the durable handoff checkpoint; obtain its hash from Git history. Stop after reporting this stage. No P1 or later stage is approved by these findings.
+
+## P0.6 final planning — complete
+
+Starting history: `759a327` on main and origin/main, with a clean tree. The user supplied a successful push of P0.5 after that stage ended. This corrects the index's stale publication context without granting an agent any future push permission. Read repository instructions, guide, root overview and all tracked planning/research documents; preserve P0.5 evidence and alternatives.
+
+Initial shell allowance: five-hour 94%, weekly 99%; ten-minute checkpoint interval. At the next shell checkpoint, five-hour 88%, weekly 98%; saved the master architecture/stack/contracts/task sequence and public metadata summaries, continuing documentation only.
+
+New research resolved published crate/license/MSRV/dependency edges using registry JSON (S56/S60), selected stable Rust 1.99.1 from the official announcement, and chose direct HTTP rather than another agent runtime. Selected official JavaScript Playwright/Node LTS by matching engine requirements; native atspi/ashpd must resolve zbus 5.x and retain async-io where upstream requires it. Landlock wrapper defaults to best-effort, so required rights must use strict compatibility policy.
+
+SQLite review found the older rusqlite tag embeds 3.54.0 even though a latest docs constant showed a stale 0.38.2 / 3034001 snapshot. Neither proves sys 0.39.1's runtime engine. Select a non-yanked compatible sys 0.39.1 constraint and require actual linked engine >=3.54.1 at the first build; no unsafe system/vendor fallback. This is a narrow execution check, not an unresolved architecture study.
+
+P0.6 source-access limitations: guessed Rust 1.92.0 date URL was invalid; official index established 1.99.1 instead. Versioned docs.rs manifests/sys constants remained inaccessible; registry dependency metadata plus rusqlite's versioned manifest/header were used. Guessed Landlock LICENSE path returned 404; registry license expression used. ashpd moving master differs from published metadata, so the published package governs candidate features/MSRV. Ubuntu 24.04 listing returned a 26.10 heading alongside 24.04 image filenames; only a proposed test target is inferred. Record these conflicts rather than invent validation.
+
+One concrete environment blocker: Cargo reads ancestor configuration; CARGO_HOME within Rivet does not eliminate that behavior. The P1a handoff must require an existing contained execution route, or separately approved narrow automatic config-read access, before source edits/builds. No host settings were inspected to determine which route exists. No installs, source archives, binaries/models, builds, tests, paid calls, remote changes or pushes were performed.
+
+P0.6 final-pass refinements: selected cap-std already in P1a for state/config boundaries, without exposing coding tools yet. Read-only status/list cannot initialize WAL/shared-memory as a side effect: selected quiescent locked immutable reads only, active/dirty state reports busy/recovery-required, and P2 introduces supervised live status (S66). Explicit URI flags are necessary; immutable is forbidden against a changing DB. Source-backed numeric limits are not claimed: selected cancellation/run/soak/retention numbers are engineering targets for owner stage adoption and later measurement.
+
+All D01–D15 now have dispositions: D01–D12/D14–D15 selected technical recommendations plus named owner/verification gates; D13 intentionally remains owner-only. Published version constraints resolved the rusqlite/desktop ambiguity without overwriting P0.5 observations. Master and handoff are the current authoritative recommendation layer; historical analysis/alternatives remain linked and Git-preserved. P1a prompt includes no execution authorization until the owner sends it in a future turn.
+
+Final compatibility correction: ashpd defaults to Tokio, while atspi-connection enables async-io. Selected ashpd defaults off/async-io and async-io 2.6.0 in the separate desktop worker, preventing an unqualified mixed-runtime zbus graph; the supervisor remains Tokio. Registry/API metadata was checked, not compiled. At the next shell checkpoint allowance was five-hour 83%, weekly 97%; all drafts and source evidence were saved.
+
+
+### P0.6 validation and durable handoff
+
+Created MASTER_IMPLEMENTATION_PLAN.md and P1_IMPLEMENTATION_HANDOFF.md; updated the index, D01–D15 dispositions, roadmap, four supporting-document authority notes and both evidence logs/registers. Eleven tracked planning files changed. Root README, brief, AGENTS.md, documentation guide and .gitignore remain unchanged. P0.5 sources/alternatives and actual publication history are preserved; the user push of 759a327 is documented without relaxing agent push restrictions.
+
+Documentation checks passed for 12 planning Markdown files: 86 local links/anchors, one title, heading order, table shape, fence balance, newlines/whitespace, all 67 source IDs and all 15 decision rows. Public unauthenticated HEAD checks passed for all 147 distinct cited URLs after redirects; this establishes reachability, not immutable content or build compatibility. Raw registry/dependency/engine/link metadata remains locally under ignored .research-local; substantive conclusions, constraints, source URLs and limits are Git-tracked.
+
+Reviewed the master/handoff, exact staged diff and requirements/security consistency, including approved role counts, unset provider/no default downloads, one ledger/runtime, artifact/replay ambiguity, root-contained paths, final capacities/presets and extension independence. Selected one desktop async-io runtime to avoid mixed zbus features. Read-only inspection policy explicitly prevents database/WAL/SHM creation and refuses live/dirty state; future tests must demonstrate that behavior. Repair/settings remain model-free planned deliverables under guarded P2/P6 tasks, outside bounded P1a.
+
+Checked ignore rules preserve documentation/source/Cargo.lock while raw scratch stays ignored. Common private-key/token/credential-URL/assigned-secret pattern review found no matches, supplemented by content review; not an exhaustive secret-detection guarantee. git diff --cached --check passed. No Markdown/Mermaid rendered preview, compiler/Cargo invocation, application test/build, sandbox exercise, dependency resolution/advisory scan, model benchmark or live inference was performed. No software/source scaffold, installation, source archive/binary/model acquisition, outside-project filesystem inspection, sibling access, paid call, remote change, GitHub publication or push occurred.
+
+P0.6 is the final general planning pass. Recommendations are implementation-ready defaults; runtime acceptance still requires evidence. Immediate gates are explicit P1a authorization, compliant existing build route or separately approved Cargo configuration-read exception, and bounded source-acquisition permission if needed. License/signing/release/support/inventory choices remain owner decisions at their assigned stages; no P1 permission is inferred. The local P0.6 commit is the durable checkpoint; get its hash from Git history. Report and STOP.

@@ -1,5 +1,7 @@
 # Security and recovery design
 
+**P0.6 authority note:** The [master implementation plan](MASTER_IMPLEMENTATION_PLAN.md) selects the current stack, defaults and contracts; [decision dispositions](open-decisions.md) distinguish owner approvals from technical recommendations. P0.5 comparisons and proposal wording below are retained as research provenance, not competing current defaults. No implementation is authorized.
+
 **P0.5 proposal, not an implemented security guarantee.** The [brief](RIVET_PROJECT_BRIEF.md) approves explicit permissions, a trusted broker, one durable ledger, recoverable multi-day work and cancellation. Mechanisms below require approval and qualification. [Architecture](architecture.md) owns component contracts; [agent execution](agent-execution.md) owns hierarchy and scheduling; [open decisions](open-decisions.md) records unresolved policies.
 
 ## Threat model and trust boundaries

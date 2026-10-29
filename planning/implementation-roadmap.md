@@ -1,6 +1,6 @@
 # Proposed implementation and qualification roadmap
 
-**Status: P0.5 documentation only.** All stages below are future proposals requiring separate explicit approval of scope and side effects. No source, scaffold, build, application test, installation, model download or benchmark was produced during this research. P1–P7 retain the [brief's](RIVET_PROJECT_BRIEF.md) sequence; lettered subdivisions make approval scopes smaller, not new release promises.
+**Status: P0.6 final planning; no implementation.** The [master plan](MASTER_IMPLEMENTATION_PLAN.md#dependency-ordered-work-packages) provides exact task IDs/modules/contracts; the [P1 handoff](P1_IMPLEMENTATION_HANDOFF.md) is the next bounded request. The stage rationale below is retained from P0.5; explicit P0.6 defaults and task ordering govern choices that it previously left open. All stages below are future proposals requiring separate explicit approval of scope and side effects. No source, scaffold, build, application test, installation, model download or benchmark was produced during this research. P1–P7 retain the [brief's](RIVET_PROJECT_BRIEF.md) sequence; lettered subdivisions make approval scopes smaller, not new release promises.
 
 Every stage must end with evidence-backed results, failed/unrun checks, a durable local checkpoint and a stop. An acceptance criterion is a future requirement, not a checked result. Any network acquisition, live provider use, paid call, desktop/device access, benchmark, push or publication must be within that stage's explicit authorization. Approval of architecture or this roadmap is not implementation approval.
 
@@ -8,7 +8,7 @@ Every stage must end with evidence-backed results, failed/unrun checks, a durabl
 
 | Stage | Depends on | Useful outcome |
 | --- | --- | --- |
-| P1a–P1c Solo foundation | Owner resolves P1-blocking decisions in the [decision register](open-decisions.md) | A bounded, permission-controlled Solo coding workflow and model-free administration. |
+| P1a–P1d Solo foundation | Approve selected P1a defaults and compliant build/acquisition scope in the [decision register](open-decisions.md) | A bounded, permission-controlled Solo coding workflow and model-free administration. |
 | P2a–P2b Recovery | P1 operation/grant IDs, receipts and provider boundaries | Crash reconciliation, restart and qualified multi-day runs. |
 | P3a–P3c Hierarchies | P2 ownership/message persistence and budget accounting | Pair/Crew/Fleet first, then qualified Shared Model/Relay, Mesh/Adaptive. |
 | P4a Browser | P1 sandbox/broker, P2 cancellation/artifacts; P3 not technically required for initial browser adapter | Qualified Playwright/Chromium workflows. |
@@ -21,11 +21,11 @@ Security and recovery are cross-cutting: P1 needs safe cancellation and effect i
 
 ## P1: functional Solo coding agent
 
-### P1a — executable shell, administration and contracts
+### P1a — administrative executable and contracts
 
-**Dependencies:** decide Rust/MSRV/dependency policy, minimal terminal interaction, first provider contract, project-state location and minimum sandbox profile (D01–D06). No default provider/model may be preselected for inference.
+**Dependencies:** approve the master-selected Rust 1.99.1/line-CLI/pin policy, provider port, project-local state and deny-all production execution in P1a (D01–D06). Pass the handoff environment preflight; do not inspect ancestor Cargo config without its own permission. No default provider/model may be preselected for inference.
 
-**Deliverables:** an approved Rust scaffold; CLI help/config review/status/repair functions that work without model credentials; versioned session/run/operation envelopes; exactly one Independent; explicit provider-not-configured status; one broker/registry/ledger boundary even if the initial schema is small. Installation acquisition is a separate explicitly approved side effect, not implicit in selecting crates.
+**Deliverables:** an approved Rust scaffold; CLI help/config review/status functions that work without model credentials; guarded repair commands follow P2 recovery; versioned session/run/operation envelopes; exactly one Independent; explicit provider-not-configured status; one broker/registry/ledger boundary even if the initial schema is small. Installation acquisition is a separate explicitly approved side effect, not implicit in selecting crates.
 
 **Future checks:** invalid/valid Solo composition; malformed config/schema; absence of provider; no network/model acquisition during administration; restricted project roots and denied execution; terminal restoration; synthetic provider events and cancellation.
 
@@ -45,11 +45,17 @@ Security and recovery are cross-cutting: P1 needs safe cancellation and effect i
 
 **Dependencies:** P1b plus a qualified provider adapter; live inference requires a separately permitted endpoint, context/data scope and cost ceiling.
 
-**Deliverables:** understand a small project, plan, edit, invoke relevant checks, show diff and report evidence; session continuation and bounded context; simple new-project creation; initial MCP/skills registration policy without untrusted auto-execution. Minimal remains Solo only.
+**Deliverables:** understand a small project, plan, edit, invoke relevant checks, show diff and report evidence; session continuation and bounded context; simple new-project creation; provider-independent session/scaffold policy; MCP/skills move to the separately bounded P1d. Minimal remains Solo only.
 
 **Future checks:** deterministic fake-provider coding scenarios; malformed/partial/duplicate tool calls; refusal/approval routes, provider error/timeout/quota, context overflow, interrupted usage accounting and no unapproved fallback. Optional live smoke check only within approved data/spend.
 
 **Acceptance:** demonstrate a useful coding task with exact workspace/result references and a reproducible test record; model-free administration still works; no invented installation instructions or release claims. Risk: one provider's success being generalized to all compatible endpoints.
+
+### P1d — additional adapters and controlled extensibility
+
+**Dependencies:** accepted P1c Solo loop and explicit P1d approval. Implement master task P1d.1: native Ollama/Anthropic provider profiles and rmcp stdio client/explicit skills with common broker and ledger. Select existing providers only by user configuration; no runtime/model acquisition or hidden fallback.
+
+**Deliverables/checks:** synthetic provider/MCP fixtures, pinned auth/versioning, dynamic schema and reverse-request denial, no unapproved sampling or plugin execution, common usage/cancellation evidence. Optional live/remote checks need separate destination/data/cost approval. Acceptance: additional adapters preserve P1c safety/administration and do not duplicate runtime ownership; local checkpoint then STOP.
 
 ## P2: durable recovery and multi-day autonomy
 

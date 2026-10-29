@@ -1,5 +1,7 @@
 # Proposed Rivet architecture
 
+**P0.6 authority note:** The [master implementation plan](MASTER_IMPLEMENTATION_PLAN.md) selects the current stack, defaults and contracts; [decision dispositions](open-decisions.md) distinguish owner approvals from technical recommendations. P0.5 comparisons and proposal wording below are retained as research provenance, not competing current defaults. No implementation is authorized.
+
 **P0.5 research; no implementation.** Approved constraints come from the [brief](RIVET_PROJECT_BRIEF.md). All component contracts, storage shapes and technology choices below are proposals for later approval. Upstream facts are linked; source IDs resolve through the [source register](research/source-register.md). Scheduling is authoritative in [agent execution](agent-execution.md); failure/replay policy is authoritative in [security and recovery](security-and-recovery.md).
 
 ## Architectural direction

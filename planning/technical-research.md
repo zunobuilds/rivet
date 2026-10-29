@@ -1,5 +1,7 @@
 # Technology comparisons and feasibility
 
+**P0.6 authority note:** The [master implementation plan](MASTER_IMPLEMENTATION_PLAN.md) selects the current stack, defaults and contracts; [decision dispositions](open-decisions.md) distinguish owner approvals from technical recommendations. P0.5 comparisons and proposal wording below are retained as research provenance, not competing current defaults. No implementation is authorized.
+
 **P0.5 research snapshot: 30 October 2026.** No dependencies are selected, downloaded, built or benchmarked. Recommendations are proposals. The [source register](research/source-register.md) owns upstream URLs, observed versions, license evidence, access date and maintenance limitations; this document owns comparisons. [Open decisions](open-decisions.md) records approval/qualification gates.
 
 ## Selection principles

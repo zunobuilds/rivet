@@ -1,5 +1,7 @@
 # Agent execution proposal
 
+**P0.6 authority note:** The [master implementation plan](MASTER_IMPLEMENTATION_PLAN.md) selects the current stack, defaults and contracts; [decision dispositions](open-decisions.md) distinguish owner approvals from technical recommendations. P0.5 comparisons and proposal wording below are retained as research provenance, not competing current defaults. No implementation is authorized.
+
 **Status:** P0.5 design research only. Exact compositions below are approved requirements from the [brief](RIVET_PROJECT_BRIEF.md); ownership, scheduling and budget mechanics are proposals. Component boundaries live in [architecture](architecture.md), recovery rules in [security and recovery](security-and-recovery.md), and unresolved choices in [open decisions](open-decisions.md).
 
 ## Approved mode invariants
