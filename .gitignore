@@ -1,0 +1,40 @@
+# Rust build output and local Cargo caches; keep Cargo.lock and Cargo config.
+target/
+/.cargo/registry/
+/.cargo/git/
+/.cargo/.package-cache*
+
+# Local caches, temporary data, logs, and profiling output.
+.cache/
+/tmp/
+/temp/
+*.tmp
+*.temp
+*.log
+*.profraw
+*.profdata
+
+# Local environments and secrets; keep safe configuration examples.
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.sample
+/.cargo/credentials
+/.cargo/credentials.toml
+/secrets/
+/credentials/
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Personal editor state and OS metadata.
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
