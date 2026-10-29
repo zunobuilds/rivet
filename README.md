@@ -1,8 +1,8 @@
 # Rivet
 
-Rivet is a planned standalone AI coding-agent platform for developers who want a terminal-first coding assistant, configurable agent hierarchies, and explicit control over models, tools, permissions, and long-running work. Rust-based development is planned, with useful pre-1.0 milestones leading to a mature Linux release.
+Rivet is a standalone AI coding-agent platform under development. Its Rust P1a foundation provides model-free administration, local SQLite sessions, and tested permission and supervisor contracts. Coding inference and the broader platform remain planned, with useful pre-1.0 milestones leading to a mature Linux release.
 
-**Status: planning and initial documentation only.** This repository currently contains project guidance and a product brief, plus this README and a development `.gitignore`. There is no application implementation, Cargo project, installer, tested integration, release, or benchmark. Every product capability described below is **planned**, unless explicitly identified as present documentation. No installation or runtime commands are available to verify yet.
+**Status: P1a foundation implemented; no coding loop or real tool execution.** Administrative commands work without a provider, model, account or network connection. Later product capabilities described below remain **planned**. Format and Clippy qualification could not run because the installed toolchain lacks those commands; see the [P1a evidence](planning/research/p1a-evidence.md). No installer, release or benchmark is provided.
 
 Rivet is intended to be free and open-source software (FOSS), but no license has been selected or included. The FOSS goal is not a present license grant.
 
@@ -28,12 +28,47 @@ Rivet is intended to be free and open-source software (FOSS), but no license has
 | --- | --- |
 | Product definition | Recorded in the [project brief](planning/RIVET_PROJECT_BRIEF.md), dated 30 October 2026. |
 | Repository guidance | [AGENTS.md](AGENTS.md) defines work boundaries; the [documentation guide](GITHUB_DOCUMENTATION_GUIDE.md) defines documentation practices. |
-| Coding agent and runtime | Planned; no runnable software is present. |
-| Installation and configuration | Planned; no installer, supported provider configuration, or minimum Rust version is established. |
-| Testing and compatibility | No application tests, CI workflows, platform qualifications, or performance results are present. |
+| Foundation | Runnable administrative CLI, schema-v1 ledger and sessions; contract tests use an inert tool and fake provider only. |
+| Source build | Rust 1.99.1, installed GCC and bubblewrap; contained developer build route below. No installer. |
+| Testing | Deterministic offline unit/integration and build-containment checks; no broad platform qualification, CI or performance results. |
 | Licensing | Undecided; no license file is present. |
 
-To explore the project today, read this overview and the project brief. There is no working coding-session example or supported source-build procedure yet. A future quick start must be derived from implemented tooling and tested prerequisites, rather than speculative CLI syntax.
+Use the repository root as the project directory. This source checkout requires the already installed Rust 1.99.1 compiler, GCC, bubblewrap, Python 3 and the system paths encoded in [the wrapper](scripts/cargo-contained). The wrapper fails rather than installing missing tools. Its `/usr`/linker/CA-bundle layout has been exercised on the current Linux host only.
+
+The first fetch accesses public crates.io registry metadata and dependency source archives. It does not install tools or download models. All caches, temporary files and build outputs remain under ignored `.build/`. Run fetching separately from offline compilation:
+
+```bash
+scripts/cargo-contained probe
+scripts/cargo-contained fetch --locked
+scripts/cargo-contained offline build --locked --offline
+scripts/cargo-contained offline run --locked --offline -- status --json
+scripts/cargo-contained offline run --locked --offline -- config check --json
+```
+
+With no config or state, status reports `provider: "absent"`, `state: "missing"` and `execution_available: false`. Read-only commands do not initialize state. The current directory selects the project root; config is `.rivet.toml` there, without parent/home discovery. A missing default config is valid. An explicit `config check --config PATH` must exist inside that project. This P1a build restricts project roots to this checkout (or its `/work` sandbox mount), including contained fixtures.
+
+Only these explicit mutations create project-local state and sessions:
+
+```bash
+scripts/cargo-contained offline run --locked --offline -- state init
+scripts/cargo-contained offline run --locked --offline -- session new
+scripts/cargo-contained offline run --locked --offline -- session list --json
+```
+
+State defaults to `.rivet-state/`; `status`, `state init` and session commands accept `--state-dir PATH` inside the project. State roots must be owner-only directories without links. Status/list refuse busy state or WAL/recovery remnants; P1a supplies no recovery command. Help/version, config check, status and session list are read-only. Exit classes are 0 success, 2 invalid input/config, 3 unsupported/not-ready capability, 4 state/lock/I/O failure, and 130 interruption.
+
+A minimal optional `.rivet.toml` contains `schema_version = 1`. The optional `[provider]` table accepts `profile`, `endpoint` and `model` strings. It is syntax only: status reports `configured-unverified`, with real adapters/execution unavailable. Unknown fields or schema versions fail. Do not store keys in configuration; P1a has no credential input or keyring backend.
+
+Run checks after fetching:
+
+```bash
+python3 scripts/verify-build-boundary.py
+scripts/cargo-contained offline fmt --all -- --check
+scripts/cargo-contained offline clippy --locked --offline --all-targets -- -D warnings
+scripts/cargo-contained offline test --locked --offline --all-targets
+```
+
+The boundary check exercises an actual Cargo build script and its child. The wrapper hides host home/ancestor configuration and Git metadata, clears the inherited environment and disables build networking. Fetch uses only Cargo's fetch command with network access. This developer build boundary is separate from the future P1b runtime worker sandbox. It does not protect against compromised host software or malicious same-user host processes. Missing `cargo-fmt`/`cargo-clippy` must be reported, never automatically installed.
 
 ## Coding experience
 
@@ -62,7 +97,7 @@ The following cardinalities are requirements for the planned modes. Role names d
 | **Pair** | Exactly 1 **Lead** and 1 **Operator** | A lead coordinates an operator. |
 | **Crew** | Exactly 1 **Lead**, 1 **Reviewer**, and at least 1 **Operator** | Coordinated execution with a dedicated review role. |
 | **Fleet** | Exactly 1 **Director**, at least 1 **Lead**, at least 1 **Reviewer**, and at least 1 **Operator** | A director coordinates a larger hierarchy. |
-| **Mesh** | Configurable peers | Precise ownership and scheduling semantics remain to be designed. |
+| **Mesh** | Configurable peers | Single-owner local peer scheduling is specified for later implementation. |
 | **Adaptive** | Configurable selection of valid modes | Mode selection must preserve each selected mode's fixed-count rules. |
 
 Temporary specialists must fit the active mode's invariants or request a permitted mode change. Adaptive selection cannot silently bypass those constraints.
@@ -95,7 +130,7 @@ The user chooses an existing compatible local provider or remote endpoint, or ex
 
 An absent model or missing credentials must result in an honest status such as “provider not configured.” It must not trigger an automatic download, cloud fallback, upload, paid call, or concealed account setup. Inference readiness must be checked before being claimed.
 
-Permitted local-to-cloud or cloud-to-local switching will be configurable, with cost, quota, privacy, and data-transfer warnings. Remote inference can incur provider charges and transfer submitted project context; switching requires the user's permitted policy. Provider compatibility, credentials, configuration formats, and runtime support are not yet implemented.
+Permitted local-to-cloud or cloud-to-local switching will be configurable, with cost, quota, privacy, and data-transfer warnings. Remote inference can incur provider charges and transfer submitted project context; switching requires the user's permitted policy. Real provider compatibility, credentials and inference runtime support remain unimplemented; P1a accepts only syntactic provider configuration.
 
 ### Cookbook recommendations
 
@@ -225,11 +260,12 @@ Open qualification work includes exact upstream versions, dependencies, notices 
 
 ## Project documentation and participation
 
+- [P1a evidence](planning/research/p1a-evidence.md): implementation, checks, dependencies and remaining limitations.
 - [Project brief](planning/RIVET_PROJECT_BRIEF.md): the authoritative planning reference for this overview, including product boundaries and unresolved decisions.
 - [Repository instructions](AGENTS.md): authorized filesystem scope, staged work rules, and Git permissions for agents working here.
 - [GitHub documentation guide](GITHUB_DOCUMENTATION_GUIDE.md): evidence-first documentation and repository practices.
 
-There is no implemented contributor setup, test suite, or established support policy yet. Proposed work should be grounded in the brief and clearly separate design decisions from verified behavior. Do not install tools, acquire models, or start a later implementation stage solely because it appears on the roadmap.
+The contained source-build and test commands above are available; no established support policy exists yet. Proposed work should be grounded in the brief and clearly separate design decisions from verified behavior. Do not install tools, acquire models, or start a later implementation stage solely because it appears on the roadmap.
 
 ## License and third-party materials
 

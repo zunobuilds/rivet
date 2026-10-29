@@ -1,0 +1,13 @@
+#![forbid(unsafe_code)]
+#[cfg(not(target_os = "linux"))]
+compile_error!("Rivet P1a is qualified for Linux only");
+pub mod cli;
+pub mod config;
+pub mod domain;
+pub mod error;
+pub mod ledger;
+pub mod permissions;
+pub mod providers;
+pub mod sessions;
+pub mod supervisor;
+pub mod tools;

@@ -41,3 +41,7 @@ Desktop.ini
 
 # Raw research responses and scratch only; substantive findings stay in planning/.
 /.research-local/
+
+# Contained developer build and project-local runtime state.
+/.build/
+/.rivet-state/

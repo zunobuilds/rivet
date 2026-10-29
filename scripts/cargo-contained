@@ -1,0 +1,35 @@
+#!/usr/bin/bash
+# P1a developer build boundary; not a Rivet runtime worker sandbox.
+set -euo pipefail
+root=$(cd -- "$(/usr/bin/dirname -- "$0")/.." && pwd -P)
+mode=${1:?usage: cargo-contained probe|fetch|offline [arguments]}
+shift
+for local_path in .build .build/cargo-home .build/tmp .build/target; do
+  if [[ -L "$root/$local_path" ]]; then echo 'refusing symlinked build storage' >&2; exit 4; fi
+done
+for local_path in .cargo .build/cargo-home/config .build/cargo-home/config.toml .build/cargo-home/credentials .build/cargo-home/credentials.toml; do
+  if [[ -e "$root/$local_path" || -L "$root/$local_path" ]]; then
+    echo 'refusing Cargo configuration or credential exposure' >&2; exit 4
+  fi
+done
+umask 077
+/usr/bin/mkdir -p "$root/.build/cargo-home" "$root/.build/tmp" "$root/.build/target"
+args=(--unshare-all --die-with-parent --new-session --ro-bind /usr/bin /usr/bin --ro-bind /usr/lib /usr/lib
+ --ro-bind /usr/lib64 /usr/lib64 --ro-bind /usr/libexec /usr/libexec --ro-bind /usr/include /usr/include
+ --symlink usr/lib /lib --symlink usr/lib64 /lib64 --symlink usr/bin /bin
+ --ro-bind /usr/bin/ld.bfd /etc/alternatives/ld --proc /proc --dev /dev --bind "$root" /work --tmpfs /work/.git --remount-ro /work/.git
+ --chdir /work --clearenv --setenv PATH /usr/bin --setenv CARGO_HOME /work/.build/cargo-home
+ --setenv CARGO_TARGET_DIR /work/.build/target --setenv TMPDIR /work/.build/tmp
+ --setenv CARGO_NET_OFFLINE true --setenv RUST_BACKTRACE 0 --setenv RIVET_SOURCE_ROOT "$root")
+case "$mode" in
+ fetch)
+  # Only Cargo's source fetch subcommand receives network access. No build scripts.
+  args+=(--share-net --ro-bind /etc/resolv.conf /etc/resolv.conf
+   --ro-bind /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+   --setenv CARGO_HTTP_CAINFO /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem --setenv CARGO_NET_OFFLINE false)
+  command=(/usr/bin/cargo fetch "$@") ;;
+ offline) command=(/usr/bin/cargo "$@") ;;
+ probe) command=(/usr/bin/python3 /work/scripts/check-containment.py) ;;
+ *) echo 'unknown contained build mode' >&2; exit 2 ;;
+esac
+exec /usr/bin/bwrap "${args[@]}" --remount-ro / -- "${command[@]}"
