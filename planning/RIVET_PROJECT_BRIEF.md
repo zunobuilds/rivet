@@ -1,8 +1,8 @@
 # Rivet — Project Brief (Planned Features)
 
-**Planning reference for the first README draft.** The following is the approved Rivet/Unrivet product vision as of 30 October 2026. It is **not** proof of implemented, tested, or released functionality. This reference is deliberately one file so Codex can work within the Rivet repository without accessing the ChatGPT Library or the sibling Unrivet repository.
+**Approved product planning reference.** The following is the approved Rivet/Unrivet product vision as of 30 October 2026. It is **not** proof of implemented, tested, or released functionality. This reference is deliberately one file so Codex can work within the Rivet repository without accessing the ChatGPT Library or the sibling Unrivet repository.
 
-**For the first Codex task:** Read this document together with the repository's existing `AGENTS.md` and `GITHUB_DOCUMENTATION_GUIDE.md`, inspect the actual Rivet repository contents, and write only the root `README.md`. Explain the vision and **all planned feature families**, but clearly distinguish the current project status from future features. Do not claim the project already works. Do not create source code, a Rust/Cargo scaffold, extra documentation files, a license, a Git commit, a remote, or install anything in this step. Stop after the README and report what changed.
+**Historical task scope retired:** The first-README-only instructions are obsolete. The approved initial documentation stage was completed in commit `6fb21b0`. Stage P0.5 authorizes architecture and feasibility research documentation plus local commits only; it does not authorize implementation, installations, remote changes, or publication. Future stages remain subject to explicit user approval.
 
 **Precedence:** The user's direct instructions and `AGENTS.md` control the task. This is a scoped product reference, not a mandate for autonomous implementation. Historical descriptions of the file manager, Midnight Commander, OpenCode-first architecture, old role names or mandatory models are superseded.
 

@@ -38,3 +38,6 @@ target/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Raw research responses and scratch only; substantive findings stay in planning/.
+/.research-local/
