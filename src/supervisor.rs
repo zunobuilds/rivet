@@ -3,8 +3,14 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use crate::{domain::RunSpec, error::{Error, Result}, providers::{InferRequest, ProviderEvent, ProviderPort}};
 
 /// Only controller owns task lifetime; separate control does not enter the ordinary queue.
-pub struct Supervisor { stop: CancellationToken, tasks: TaskTracker }
-impl Default for Supervisor { fn default() -> Self { Self { stop: CancellationToken::new(), tasks: TaskTracker::new() } } }
+pub struct Supervisor { stop: CancellationToken, tasks: TaskTracker, registry: crate::tools::Registry }
+impl Default for Supervisor {
+    fn default() -> Self {
+        let mut registry = crate::tools::Registry::default();
+        registry.register(crate::tools::files::FileWorkspace::descriptor()).expect("built-in descriptor is valid");
+        Self { stop: CancellationToken::new(), tasks: TaskTracker::new(), registry }
+    }
+}
 impl Supervisor {
     pub fn cancellation(&self) -> CancellationToken { self.stop.clone() }
     pub fn admit(&self, spec: &RunSpec) -> Result<()> { spec.validate() }
@@ -169,5 +175,68 @@ impl Supervisor {
         effects.fetch_add(1,Ordering::SeqCst);
         ledger.transition(3,Transition::Receipt {receipt:ExecutionReceipt {schema_version:1,operation:p.operation,attempt:1,outcome:Outcome::Succeeded,exit_code:None,error:None,artifacts:vec![],before_revision:None,after_revision:None,redacted_output:String::new()}}).await?;
         ledger.transition(4,Transition::Terminal {operation:p.operation}).await
+    }
+}
+
+impl Supervisor {
+    /// Single-operation file dispatch for trusted host orchestration; no CLI/model approval path.
+    pub async fn execute_file(
+        &self,
+        spec: &RunSpec,
+        ledger: &crate::ledger::Ledger,
+        broker: &mut crate::permissions::Broker,
+        files: std::sync::Arc<crate::tools::files::FileWorkspace>,
+        proposal: crate::tools::ToolProposal,
+        grant: crate::permissions::Grant,
+    ) -> Result<crate::tools::files::FileResult> {
+        use crate::{domain::{ExecutionReceipt, Outcome}, ledger::Transition, tools::files::{FileAction, DESCRIPTOR}};
+        self.admit(spec)?;
+        self.check_cancelled()?;
+        let descriptor = self.registry.get("rivet:files",1).ok_or(Error::Unsupported)?;
+        if descriptor.build_digest != proposal.descriptor_digest { return Err(Error::Denied); }
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| Error::State)?.as_secs();
+        if proposal.descriptor_digest != DESCRIPTOR || broker.epoch() != ledger.epoch()
+            || spec.permission_epoch != broker.epoch() || now >= spec.deadline
+            || spec.project != ledger.project_id() || files.identity() != ledger.workspace_identity() { return Err(Error::Denied); }
+        ledger.transition(0, Transition::Propose { run: spec.run, proposal: proposal.clone() }).await?;
+        let validation = (|| {
+            let action: FileAction = serde_json::from_value(proposal.arguments.clone()).map_err(|_| Error::Invalid)?;
+            if files.resources(&action)? != proposal.resources { return Err(Error::Denied); }
+            Ok(action)
+        })();
+        let action = match validation { Ok(action) => action, Err(e) => {
+            ledger.transition(0, Transition::Deny { operation: proposal.operation }).await?; return Err(e);
+        }};
+        let reference = grant.reference(); let expiry = grant.expiry();
+        // Consume before any file read/write; mutated/revoked/expired approval cannot dispatch.
+        if let Err(error) = broker.consume(grant, &proposal, now) {
+            ledger.transition(0, Transition::Deny { operation: proposal.operation }).await?; return Err(error);
+        }
+        ledger.transition(0, Transition::Authorize { operation: proposal.operation, grant: reference, expiry, scope: proposal.digest()? }).await?;
+        self.check_cancelled()?;
+        ledger.transition(1, Transition::Intent { operation: proposal.operation }).await?;
+        ledger.transition(2, Transition::Dispatched { operation: proposal.operation }).await?;
+        let before_revision = match &action {
+            FileAction::Write {expected, ..} => expected.as_ref().map(|r|r.digest.clone()),
+            FileAction::Patch {expected, ..} | FileAction::Delete {expected, ..} | FileAction::Rename {expected, ..} => Some(expected.digest.clone()),
+            _ => None,
+        };
+        let stop = self.stop.child_token();
+        let effect = self.tasks.spawn_blocking(move || files.perform(&action, &stop)).await.map_err(|_| Error::State)?;
+        let outcome = match &effect {
+            Ok(_) => Outcome::Succeeded,
+            Err(Error::State) => Outcome::Unknown,
+            Err(Error::Interrupted) => Outcome::Cancelled,
+            Err(_) => Outcome::Failed,
+        };
+        let receipt = ExecutionReceipt {
+            schema_version: 1, operation: proposal.operation, attempt: proposal.attempt, outcome,
+            exit_code: None, error: effect.as_ref().err().map(|e|e.kind().to_owned()), artifacts: vec![],
+            before_revision, after_revision: effect.as_ref().ok().and_then(|r|r.revision.as_ref().map(|r|r.digest.clone())),
+            redacted_output: effect.as_ref().ok().map_or_else(String::new, |r|format!("changed={};diff_sha256={}",r.changed,crate::tools::sha256(r.diff.as_bytes()))),
+        };
+        ledger.transition(3, Transition::Receipt { receipt }).await?;
+        if effect.is_ok() { ledger.transition(4, Transition::Terminal { operation: proposal.operation }).await?; }
+        effect
     }
 }

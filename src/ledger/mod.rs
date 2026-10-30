@@ -124,9 +124,13 @@ pub struct Ledger {
     stop: CancellationToken,
     worker: Option<JoinHandle<Result<()>>>,
     epoch: u64,
+    project_id: ProjectId,
+    workspace_identity: (u64, u64),
 }
 impl Ledger {
     pub fn open(project: &Project, path: &Path) -> Result<Self> {
+        let metadata = project.dir.dir_metadata()?;
+        let workspace_identity = (metadata.dev(), metadata.ino());
         let root = StateRoot::acquire(project, path, true)?.ok_or(Error::State)?;
         // Orphan journals are recovery evidence even when the main DB is absent.
         if root.has_remnants()? { return Err(Error::Recovery); }
@@ -160,6 +164,8 @@ impl Ledger {
         let epoch: u64 = transaction.query_row("SELECT owner_epoch FROM meta", [], |r| r.get::<_, i64>(0))?.try_into().map_err(|_| Error::State)?;
         audit(&transaction, "project", "system", "owner-acquired")?;
         transaction.commit()?;
+        let project_uuid: String = connection.query_row("SELECT project_uuid FROM meta", [], |r|r.get(0))?;
+        let project_id = ProjectId(uuid::Uuid::parse_str(&project_uuid).map_err(|_| Error::State)?);
         let (tx, mut rx) = mpsc::channel::<Pending>(QUEUE);
         let stop = CancellationToken::new(); let control = stop.clone();
         let worker = thread::spawn(move || {
@@ -186,8 +192,10 @@ impl Ledger {
             if checkpoint? != 0 { return Err(Error::State); }
             Ok(())
         });
-        Ok(Self { tx, stop, worker: Some(worker), epoch })
+        Ok(Self { tx, stop, worker: Some(worker), epoch, project_id, workspace_identity })
     }
+    pub fn project_id(&self) -> ProjectId { self.project_id }
+    pub(crate) fn workspace_identity(&self) -> (u64, u64) { self.workspace_identity }
     pub fn epoch(&self) -> u64 { self.epoch }
     pub async fn command(&self, command: LedgerCommand) -> Result<()> {
         let (reply, response) = oneshot::channel();
@@ -273,7 +281,7 @@ mod cancellation_tests {
     #[tokio::test]
     async fn accepted_command_keeps_definitive_reply_after_cancellation() {
         let (tx, mut rx) = mpsc::channel(1);
-        let ledger = Arc::new(Ledger { tx, stop: CancellationToken::new(), worker: None, epoch: 1 });
+        let ledger = Arc::new(Ledger { tx, stop: CancellationToken::new(), worker: None, epoch: 1, project_id: ProjectId::default(), workspace_identity: (0,0) });
         let caller = ledger.clone();
         let task = tokio::spawn(async move { caller.transition(0, Transition::NewSession { id: SessionId::default() }).await });
         let pending = rx.recv().await.unwrap();

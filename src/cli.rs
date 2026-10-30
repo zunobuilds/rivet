@@ -7,11 +7,15 @@ use serde_json::json;
 pub struct Cli { #[command(subcommand)] pub command: Command }
 #[derive(Subcommand)]
 pub enum Command {
+    /// Check runtime-worker prerequisites without searching host paths or launching commands.
+    Sandbox { #[command(subcommand)] command: SandboxCommand },
     Config { #[command(subcommand)] command: ConfigCommand },
     Status { #[arg(long)] state_dir: Option<PathBuf>, #[arg(long)] json: bool },
     State { #[command(subcommand)] command: StateCommand },
     Session { #[command(subcommand)] command: SessionCommand },
 }
+#[derive(Subcommand)]
+pub enum SandboxCommand { Check { #[arg(long)] control_dir: Option<PathBuf>, #[arg(long)] json: bool } }
 #[derive(Subcommand)]
 pub enum ConfigCommand { Check { #[arg(long)] config: Option<PathBuf>, #[arg(long)] json: bool } }
 #[derive(Subcommand)]
@@ -27,6 +31,12 @@ fn output(value: serde_json::Value, structured: bool) {
 }
 pub async fn execute(cli: Cli, project: &Project) -> Result<()> {
     match cli.command {
+        Command::Sandbox { command: SandboxCommand::Check { control_dir, json } } => {
+            let result = crate::sandbox::preflight(project, control_dir.as_deref())?;
+            let ready = result.ready;
+            output(serde_json::to_value(result).expect("preflight serialization"), json);
+            if !ready { return Err(crate::error::Error::Unsupported); }
+        },
         Command::Config { command: ConfigCommand::Check { config, json } } => {
             let config = project.config(config.as_deref())?;
             output(json!({"schema_version":1,"valid":true,"provider":config.provider_status(),"execution_available":false}), json);
@@ -60,6 +70,7 @@ impl Cli {
     pub fn json_output(&self) -> bool {
         match &self.command {
             Command::Status { json, .. } => *json,
+            Command::Sandbox { command: SandboxCommand::Check { json, .. } } => *json,
             Command::Config { command: ConfigCommand::Check { json, .. } } => *json,
             Command::Session { command: SessionCommand::List { json, .. } } => *json,
             _ => false,

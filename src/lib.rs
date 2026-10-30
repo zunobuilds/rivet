@@ -9,5 +9,6 @@ pub mod ledger;
 pub mod permissions;
 pub mod providers;
 pub mod sessions;
+pub mod sandbox;
 pub mod supervisor;
 pub mod tools;

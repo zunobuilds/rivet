@@ -5,7 +5,7 @@ use thiserror::Error;
 pub enum Error {
     #[error("invalid input or configuration")]
     Invalid,
-    #[error("capability unsupported or not ready in P1a")]
+    #[error("capability unsupported or not ready")]
     Unsupported,
     #[error("state unavailable or unsafe")]
     State,

@@ -14,6 +14,8 @@ if 'OUT_DIR' not in os.environ:
         'RUST_BACKTRACE', 'LC_CTYPE', 'PWD', 'RIVET_SOURCE_ROOT',
     }
     assert set(os.environ) <= allowed
+assert os.stat('/tmp').st_ino == os.stat(os.environ['TMPDIR']).st_ino
+assert os.stat('/tmp').st_dev == os.stat(os.environ['TMPDIR']).st_dev
 assert not pathlib.Path('/home').exists()
 assert not pathlib.Path('/root').exists()
 assert not pathlib.Path('/.cargo').exists()

@@ -19,6 +19,7 @@ args=(--unshare-all --die-with-parent --new-session --ro-bind /usr/bin /usr/bin 
  --symlink usr/lib /lib --symlink usr/lib64 /lib64 --symlink usr/bin /bin
  --ro-bind /usr/bin/ld.bfd /etc/alternatives/ld --proc /proc --dev /dev --bind "$root" /work --tmpfs /work/.git --remount-ro /work/.git
  --chdir /work --clearenv --setenv PATH /usr/bin --setenv CARGO_HOME /work/.build/cargo-home
+ --bind "$root/.build/tmp" /tmp
  --setenv CARGO_TARGET_DIR /work/.build/target --setenv TMPDIR /work/.build/tmp
  --setenv CARGO_NET_OFFLINE true --setenv RUST_BACKTRACE 0 --setenv RIVET_SOURCE_ROOT "$root")
 case "$mode" in

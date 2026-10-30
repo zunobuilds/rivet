@@ -15,6 +15,8 @@ toml = { version = "=1.1.8", default-features = false, features = ["std", "serde
 rusqlite = { version = "=0.41.1", default-features = false, features = ["bundled", "backup"] }
 libsqlite3-sys = { version = "=0.39.1", default-features = false }
 cap-std = "=4.0.3"
+# Already-resolved safe syscall wrapper: atomic no-clobber rename and filesystem identity.
+rustix = { version = "=1.1.6", default-features = false, features = ["std", "fs"] }
 thiserror = "=2.0.21"
 uuid = { version = "=1.29.0", features = ["v4", "serde"] }
 

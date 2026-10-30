@@ -447,6 +447,7 @@ dependencies = [
  "clap",
  "libsqlite3-sys",
  "rusqlite",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

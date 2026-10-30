@@ -2,7 +2,7 @@
 
 Rivet is a standalone AI coding-agent platform under development. Its Rust P1a foundation provides model-free administration, local SQLite sessions, and tested permission and supervisor contracts. Coding inference and the broader platform remain planned, with useful pre-1.0 milestones leading to a mature Linux release.
 
-**Status: P1a foundation implemented; no coding loop or real tool execution.** Administrative commands work without a provider, model, account or network connection. Later product capabilities described below remain **planned**. Format and Clippy qualification could not run because the installed toolchain lacks those commands; see the [P1a evidence](planning/research/p1a-evidence.md). No installer, release or benchmark is provided.
+**Status: P1a implemented, P1b partially implemented; no coding loop or terminal execution.** Administrative commands work without a provider, model, account or network connection. A supervised file-operation library is tested in contained fixtures; it is not exposed as a CLI coding loop. P1b worker qualification is blocked on a permitted delegated cgroup-v2 route. Later product capabilities described below remain **planned**. Format and Clippy qualification could not run because the installed toolchain lacks those commands; see the [P1a evidence](planning/research/p1a-evidence.md). No installer, release or benchmark is provided.
 
 Rivet is intended to be free and open-source software (FOSS), but no license has been selected or included. The FOSS goal is not a present license grant.
 
@@ -28,7 +28,7 @@ Rivet is intended to be free and open-source software (FOSS), but no license has
 | --- | --- |
 | Product definition | Recorded in the [project brief](planning/RIVET_PROJECT_BRIEF.md), dated 30 October 2026. |
 | Repository guidance | [AGENTS.md](AGENTS.md) defines work boundaries; the [documentation guide](GITHUB_DOCUMENTATION_GUIDE.md) defines documentation practices. |
-| Foundation | Runnable administrative CLI, schema-v1 ledger and sessions; contract tests use an inert tool and fake provider only. |
+| Foundation | Runnable administrative CLI, schema-v1 ledger and sessions, plus supervised file-library fixtures. No real provider or runtime terminal execution. |
 | Source build | Rust 1.99.1, installed GCC and bubblewrap; contained developer build route below. No installer. |
 | Testing | Deterministic offline unit/integration and build-containment checks; no broad platform qualification, CI or performance results. |
 | Licensing | Undecided; no license file is present. |
@@ -69,6 +69,16 @@ scripts/cargo-contained offline test --locked --offline --all-targets
 ```
 
 The boundary check exercises an actual Cargo build script and its child. The wrapper hides host home/ancestor configuration and Git metadata, clears the inherited environment and disables build networking. Fetch uses only Cargo's fetch command with network access. This developer build boundary is separate from the future P1b runtime worker sandbox. It does not protect against compromised host software or malicious same-user host processes. Missing `cargo-fmt`/`cargo-clippy` must be reported, never automatically installed.
+
+The partial P1b library supplies bounded text read/search/create/edit/literal-patch/rename/delete operations. Trusted host orchestration must obtain a broker grant for the exact workspace/proposal and dispatch through the supervisor, which records intent and receipts. This is not a model-facing approval mechanism or a working coding CLI. It uses `openat2` to reject symlinks and mount crossings, rejects hard links/special files, protects state/config/credential paths, checks revisions and uses atomic no-clobber create/rename. Search currently requires an explicit subdirectory; files/diffs are capped at 64 KiB. Cooperative workspace serialization cannot exclude a noncooperating editor racing the final replacement; broader concurrent-edit/lease qualification remains outstanding.
+
+Inspect the worker prerequisite without creating state or searching host paths:
+
+```bash
+scripts/cargo-contained offline run --locked --offline -- sandbox check --json
+```
+
+It currently reports `ready: false`, `controls: "not-configured"` and exits 3. `--control-dir PATH` examines only an explicitly supplied directory inside the project; an ordinary directory of controller-like files is rejected as a fake cgroup. Even a real mount is only a candidate until delegation, strict Landlock, namespace/resource limits and process-tree cleanup are implemented and qualified. No terminal fallback is provided. See the [extended-run handoff](planning/research/extended-run.md) before resuming P1b or any dependent stage.
 
 ## Coding experience
 

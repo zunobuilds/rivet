@@ -148,3 +148,23 @@ fn orphan_journals_and_corrupt_meta_never_reinitialize_state() {
     assert_eq!(cli(root.path(), &["state", "init"]).status.code(), Some(4));
     assert!(snapshot(root.path()) == before);
 }
+
+#[test]
+fn worker_preflight_denies_absent_and_fake_delegation_without_effects() {
+    let root = fixture();
+    let before = snapshot(root.path());
+    let output = cli(root.path(), &["sandbox", "check", "--json"]);
+    assert_eq!(output.status.code(),Some(3));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["ready"],false); assert_eq!(value["controls"],"not-configured");
+    assert!(snapshot(root.path()) == before);
+    fs::create_dir(root.path().join("fake-controls")).unwrap();
+    fs::write(root.path().join("fake-controls/cgroup.controllers"),"cpu memory pids").unwrap();
+    let before = snapshot(root.path());
+    let output = cli(root.path(), &["sandbox","check","--control-dir","fake-controls","--json"]);
+    assert_eq!(output.status.code(),Some(3));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["controls"],"not-cgroup-v2");
+    assert!(snapshot(root.path()) == before);
+    assert_eq!(cli(root.path(), &["sandbox","check","--control-dir","../outside"]).status.code(),Some(2));
+}
