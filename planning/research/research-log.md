@@ -108,3 +108,8 @@ P0.6 is the final general planning pass. Recommendations are implementation-read
 ## 30 October 2026 — bounded P2a restore/reconciliation
 
 See [P2a acceptance](p2a-acceptance.md): schema 4, asset bundles, restartable directory-exchange restore, retained old-worker sidecars, conservative rollback budgets, explicit no-replay dispositions and repeated crash/full-storage/native qualification. Dependencies unchanged; formatter/Clippy unavailable. P2b/P3 remain dependent work. No push.
+
+
+## 30 October 2026 — P2b bounded lifecycle
+
+[P2b qualification](p2b-lifecycle.md): schema 5 durable RunSpec/checkpoints/deadlines, private control channel, explicit no-refund resume and opt-in same-supervisor detached core. Synthetic seeded dispatch/control/restart and actual crash/native detach fixtures passed; formatter/Clippy unavailable. No dependency acquisition, live inference or push. P3 remains next.

@@ -9,8 +9,10 @@ pub struct Cli { #[command(subcommand)] pub command: Command }
 pub enum Command {
     /// Inspect recovery evidence or create an exact-snapshot consistent backup.
     Repair {#[command(subcommand)] command:RepairCommand},
+    /// Durable status, controls, exact review approval and explicit bounded continuation.
+    Run {#[command(subcommand)] command:RunCommand},
     /// A provider/tool request executes only after exact interactive review.
-    Chat {#[arg(long)] task:String, #[arg(long)] config:Option<PathBuf>, #[arg(long)] state_dir:Option<PathBuf>, #[arg(long)] session:Option<String>, #[arg(long,default_value_t=100)] steps:u32, #[arg(long,default_value_t=3600)] deadline_seconds:u64, #[arg(long,default_value_t=65536)] token_budget:u64, #[arg(long,default_value_t=0)] spend_ceiling_micros:u64, #[arg(long,default_value_t=0)] request_cost_micros:u64, #[arg(long)] ephemeral_key_stdin:bool},
+    Chat {#[arg(long)] task:String, #[arg(long)] config:Option<PathBuf>, #[arg(long)] state_dir:Option<PathBuf>, #[arg(long)] session:Option<String>, #[arg(long,default_value_t=100)] steps:u32, #[arg(long,default_value_t=3600)] deadline_seconds:u64, #[arg(long,default_value_t=65536)] token_budget:u64, #[arg(long,default_value_t=0)] spend_ceiling_micros:u64, #[arg(long,default_value_t=0)] request_cost_micros:u64, #[arg(long)] ephemeral_key_stdin:bool,#[arg(long)] detach:bool,#[arg(long,hide=true)] detached_core:bool},
     /// Review/create the source-only Rust binary recipe; no build/install is run.
     Project {#[command(subcommand)] command:ProjectCommand},
     /// Check runtime-worker prerequisites without searching host paths or launching commands.
@@ -19,6 +21,15 @@ pub enum Command {
     Status { #[arg(long)] state_dir: Option<PathBuf>, #[arg(long)] json: bool },
     State { #[command(subcommand)] command: StateCommand },
     Session { #[command(subcommand)] command: SessionCommand },
+}
+#[derive(Subcommand)]
+pub enum RunCommand {
+    Status{run:uuid::Uuid,#[arg(long)]state_dir:Option<PathBuf>},
+    Pause{run:uuid::Uuid,#[arg(long)]state_dir:Option<PathBuf>},
+    Stop{run:uuid::Uuid,#[arg(long)]state_dir:Option<PathBuf>},
+    Disconnect{run:uuid::Uuid,#[arg(long)]state_dir:Option<PathBuf>},
+    Approve{run:uuid::Uuid,challenge:String,#[arg(long)]state_dir:Option<PathBuf>},
+    Resume{run:uuid::Uuid,#[arg(long)]state_dir:Option<PathBuf>,#[arg(long)]config:Option<PathBuf>,#[arg(long)]approve:Option<String>,#[arg(long,default_value_t=0)]request_cost_micros:u64,#[arg(long)]ephemeral_key_stdin:bool,#[arg(long)]detach:bool,#[arg(long,hide=true)]detached_core:bool},
 }
 #[derive(Subcommand)]
 pub enum RepairCommand {
@@ -46,8 +57,36 @@ fn state(path: &Option<PathBuf>) -> &Path { path.as_deref().unwrap_or(Path::new(
 fn output(value: serde_json::Value, structured: bool) {
     if structured { println!("{value}"); } else { println!("{}", serde_json::to_string_pretty(&value).expect("JSON value serialization")); }
 }
-pub async fn execute(cli: Cli, project: &Project) -> Result<()> {
+pub async fn execute(cli: Cli, project: &Project) -> Result<()> {execute_controlled(cli,project,tokio_util::sync::CancellationToken::new()).await}
+pub async fn execute_controlled(cli:Cli,project:&Project,cancel:tokio_util::sync::CancellationToken)->Result<()> {
     match cli.command {
+        Command::Run{command}=>{
+            use crate::ledger::control::{self,Action};use crate::domain::RunId;
+            match command{
+                RunCommand::Status{run,state_dir}=>{
+                    let run=RunId(run);match crate::lifecycle::inspect(project,state(&state_dir),run){Ok(snapshot)=>output(json!({"snapshot":snapshot,"resume_digest":snapshot.digest()?}),true),Err(crate::error::Error::Busy)=>output(control::request(project,state(&state_dir),run,Action::Status).await?,true),Err(error)=>return Err(error)}
+                },
+                RunCommand::Stop{run,state_dir}=>{
+                    let run=RunId(run);match crate::lifecycle::inspect(project,state(&state_dir),run){
+                        Ok(_)=>{let wall=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_|crate::error::Error::State)?.as_secs();output(serde_json::to_value(crate::lifecycle::stop(project,state(&state_dir),run,wall).await?).map_err(|_|crate::error::Error::State)?,true);},
+                        Err(crate::error::Error::Busy)=>output(control::request(project,state(&state_dir),run,Action::Stop).await?,true),Err(e)=>return Err(e)
+                    }
+                },
+                RunCommand::Resume{run,state_dir,config,approve,request_cost_micros,ephemeral_key_stdin,detach,detached_core}=>{
+                    if detached_core{control::verify_detached()?;}
+                    let run=RunId(run);let snapshot=crate::lifecycle::inspect(project,state(&state_dir),run)?;
+                    let Some(approved)=approve else{output(json!({"snapshot":snapshot,"resume_digest":snapshot.digest()?,"requires_fresh_reviews":true}),true);return Ok(());};
+                    if detach&&!detached_core{let arguments=std::env::args().skip(1).collect::<Vec<_>>();output(control::detach(project,state(&state_dir),&arguments).await?,true);return Ok(());}
+                    let configuration=project.config(config.as_deref())?;let provider=configuration.provider.ok_or(crate::error::Error::Unsupported)?;
+                    if ephemeral_key_stdin&&provider.profile!="anthropic"{return Err(crate::error::Error::Invalid);}
+                    let credential=if ephemeral_key_stdin{Some(crate::terminal::read_secret().await?)}else{None};
+                    let mut terminal=crate::terminal::Terminal::new();
+                    let report=crate::chat::run_controlled(project,state(&state_dir),provider,crate::chat::ChatOptions{session:Some(snapshot.spec.session),task:snapshot.spec.task,steps:100,deadline_seconds:3600,budget:crate::budget::BudgetLimits{tokens:65536,requests:100,cost_micros:u64::from(request_cost_micros>0)},request_cost_micros,credential,mcp:configuration.mcp,skills:configuration.skills},&mut terminal,cancel,crate::chat::Controls{resume:Some((run,approved)),detached:detach,external_reviews:detached_core}).await?;
+                    output(serde_json::to_value(report).map_err(|_|crate::error::Error::State)?,true);
+                },
+                other=>{let (run,state_dir,action)=match other{RunCommand::Pause{run,state_dir}=>(run,state_dir,Action::Pause),RunCommand::Disconnect{run,state_dir}=>(run,state_dir,Action::Disconnect),RunCommand::Approve{run,state_dir,challenge}=>(run,state_dir,Action::Approve{challenge}),_=>unreachable!()};output(control::request(project,state(&state_dir),RunId(run),action).await?,true);}
+            }
+        },
         Command::Repair{command:RepairCommand::Reconcile{state_dir,operation,decision,approve}}=>{
             let id=OperationId(operation);
             match (decision,approve){
@@ -64,14 +103,16 @@ pub async fn execute(cli: Cli, project: &Project) -> Result<()> {
         Command::Repair{command:RepairCommand::Recover{state_dir,approve}}=>output(serde_json::to_value(ledger::recover_state(project,state(&state_dir),&approve).await?).map_err(|_|crate::error::Error::State)?,true),
         Command::Repair{command:RepairCommand::Inspect{state_dir}}=>output(serde_json::to_value(ledger::repair_inspect(project,state(&state_dir))?).map_err(|_|crate::error::Error::State)?,true),
         Command::Repair{command:RepairCommand::Backup{state_dir,approve}}=>output(serde_json::to_value(ledger::backup_state(project,state(&state_dir),&approve)?).map_err(|_|crate::error::Error::State)?,true),
-        Command::Chat{task,config,state_dir,session,steps,deadline_seconds,token_budget,spend_ceiling_micros,request_cost_micros,ephemeral_key_stdin}=>{
+        Command::Chat{task,config,state_dir,session,steps,deadline_seconds,token_budget,spend_ceiling_micros,request_cost_micros,ephemeral_key_stdin,detach,detached_core}=>{
+            if detached_core{crate::ledger::control::verify_detached()?;}
+            if detach&&!detached_core{let arguments=std::env::args().skip(1).collect::<Vec<_>>();output(crate::ledger::control::detach(project,state(&state_dir),&arguments).await?,true);return Ok(());}
             let configuration=project.config(config.as_deref())?;
             let provider=configuration.provider.ok_or(crate::error::Error::Unsupported)?;
             let session=match session{Some(id)=>Some(SessionId(uuid::Uuid::parse_str(&id).map_err(|_|crate::error::Error::Invalid)?)),None=>None};
             if ephemeral_key_stdin&&provider.profile!="anthropic"{return Err(crate::error::Error::Invalid);}
             let credential=if ephemeral_key_stdin{Some(crate::terminal::read_secret().await?)}else{None};
             let mut terminal=crate::terminal::Terminal::new();
-            let report=crate::chat::run(project,state(&state_dir),provider,crate::chat::ChatOptions{session,task,steps,deadline_seconds,budget:crate::budget::BudgetLimits{tokens:token_budget,requests:steps,cost_micros:spend_ceiling_micros},request_cost_micros,credential,mcp:configuration.mcp,skills:configuration.skills},&mut terminal,tokio_util::sync::CancellationToken::new()).await?;
+            let report=crate::chat::run_controlled(project,state(&state_dir),provider,crate::chat::ChatOptions{session,task,steps,deadline_seconds,budget:crate::budget::BudgetLimits{tokens:token_budget,requests:steps,cost_micros:spend_ceiling_micros},request_cost_micros,credential,mcp:configuration.mcp,skills:configuration.skills},&mut terminal,cancel,crate::chat::Controls{resume:None,detached:detach,external_reviews:detached_core}).await?;
             output(serde_json::to_value(report).map_err(|_|crate::error::Error::State)?,true);
         },
         Command::Project{command:ProjectCommand::New{name,approve}}=>{

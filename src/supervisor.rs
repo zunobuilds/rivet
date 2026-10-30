@@ -251,7 +251,7 @@ impl Supervisor {
             redacted_output: effect.as_ref().ok().map_or_else(String::new, |r|format!("changed={};diff_sha256={}",r.changed,crate::tools::sha256(r.diff.as_bytes()))),
         };
         ledger.transition(3, Transition::Receipt { receipt }).await?;
-        if effect.is_ok() { ledger.transition(4, Transition::Terminal { operation: proposal.operation }).await?; }
+        if !matches!(effect,Err(Error::State|Error::Interrupted)) { ledger.transition(4, Transition::Terminal { operation: proposal.operation }).await?; }
         effect
     }
 }

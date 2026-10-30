@@ -1,10 +1,11 @@
 //! Line-oriented trusted UI. Input thread never blocks supervisor cancellation.
 use crate::{chat::{Review,Reviewer},error::{Error,Result}};
 use std::{future::Future,pin::Pin,io::{BufRead,Read,Write}};
-pub struct Terminal {input:tokio::sync::mpsc::Receiver<String>}
+pub struct Terminal {input:tokio::sync::mpsc::Receiver<String>,disconnected:tokio_util::sync::CancellationToken}
 impl Terminal {
     pub fn new()->Self {
         let (tx,input)=tokio::sync::mpsc::channel(1);
+        let disconnected=tokio_util::sync::CancellationToken::new();let signal=disconnected.clone();
         std::thread::spawn(move||{
             let stdin=std::io::stdin();let mut input=stdin.lock();
             loop {
@@ -16,11 +17,13 @@ impl Terminal {
                     Ok(_)=>if tx.blocking_send(line).is_err(){break;},
                 }
             }
-        });Self{input}
+            signal.cancel();
+        });Self{input,disconnected}
     }
 }
 impl Default for Terminal{fn default()->Self{Self::new()}}
 impl Reviewer for Terminal {
+    fn disconnected(&self)->Option<tokio_util::sync::CancellationToken>{Some(self.disconnected.clone())}
     fn approve(&mut self,review:Review)->Pin<Box<dyn Future<Output=Result<bool>>+Send+'_>> {
         Box::pin(async move {
             // JSON escapes all terminal control characters from untrusted source/model content.

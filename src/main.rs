@@ -1,5 +1,5 @@
 use clap::Parser;
-use rivet::{cli::{Cli, execute}, config::Project, error::{Error, Result}};
+use rivet::{cli::{Cli, execute_controlled}, config::Project, error::{Error, Result}};
 fn main() {
     let args:Vec<String>=std::env::args().collect();
     if args.get(1).is_some_and(|a|a=="__unit-launch") {
@@ -31,10 +31,11 @@ async fn administration() {
     let json = cli.json_output();
     let result: Result<()> = async {
         let project = Project::open(&std::env::current_dir()?)?;
-        tokio::select! {
-            biased;
-            signal = tokio::signal::ctrl_c() => { signal.map_err(|_| Error::State)?; Err(Error::Interrupted) },
-            result = execute(cli, &project) => result,
+        let cancel=tokio_util::sync::CancellationToken::new();
+        let work=execute_controlled(cli,&project,cancel.clone());tokio::pin!(work);
+        tokio::select! {biased;
+            signal=tokio::signal::ctrl_c()=>{signal.map_err(|_|Error::State)?;cancel.cancel();work.await},
+            result=&mut work=>result,
         }
     }.await;
     if let Err(error) = result {

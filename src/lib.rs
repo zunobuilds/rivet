@@ -23,3 +23,5 @@ pub mod mcp;
 pub mod skills;
 pub mod recovery;
 pub mod artifacts;
+
+pub mod lifecycle;

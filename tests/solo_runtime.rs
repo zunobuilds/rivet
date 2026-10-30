@@ -65,3 +65,19 @@ async fn changed_skill_pin_stops_before_any_inference(){
     let config=ProviderConfig{profile:"llama.cpp-compatible".into(),endpoint:"http://127.0.0.1:1/v1/chat/completions".into(),model:"synthetic".into()};let mut reviewer=Approved{deny_tools:false,reviews:vec![]};let mut options=options(None);options.skills.push(rivet::skills::Skill{id:"fixture".into(),enabled:true,path:"instructions/SKILL.md".into(),expected_sha256:"0".repeat(64)});
     assert!(matches!(chat::run(&project,Path::new("state"),config,options,&mut reviewer,CancellationToken::new()).await,Err(rivet::error::Error::Conflict)));assert_eq!(reviewer.reviews,vec!["skill-read"]);
 }
+
+struct Disconnecting {signal:CancellationToken}
+impl Reviewer for Disconnecting {
+    fn disconnected(&self)->Option<CancellationToken>{Some(self.signal.clone())}
+    fn approve(&mut self,_:Review)->Pin<Box<dyn Future<Output=Result<bool>>+Send+'_>>{let signal=self.signal.clone();Box::pin(async move{signal.cancel();std::future::pending().await})}
+}
+#[tokio::test]
+async fn disconnect_pauses_before_send_and_exact_resume_preserves_task_deadline_steps_and_budget(){
+    let temp=tempfile::tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join(".build/tmp")).unwrap();let project=Project::open(temp.path()).unwrap();let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();let address=listener.local_addr().unwrap();let config=ProviderConfig{profile:"llama.cpp-compatible".into(),endpoint:format!("http://{address}/v1/chat/completions"),model:"synthetic".into()};
+    let mut reviewer=Disconnecting{signal:CancellationToken::new()};assert!(matches!(chat::run(&project,Path::new("state"),config.clone(),options(None),&mut reviewer,CancellationToken::new()).await,Err(rivet::error::Error::Interrupted)));
+    assert!(tokio::time::timeout(std::time::Duration::from_millis(30),listener.accept()).await.is_err());let db=rusqlite::Connection::open(temp.path().join("state/ledger.sqlite")).unwrap();let run=RunId(uuid::Uuid::parse_str(&db.query_row("SELECT id FROM runs",[],|r|r.get::<_,String>(0)).unwrap()).unwrap());drop(db);let before=rivet::lifecycle::inspect(&project,Path::new("state"),run).unwrap();assert_eq!(before.state,"paused");assert_eq!(before.steps,1);
+    let server=tokio::spawn(async move{let(mut stream,_)=listener.accept().await.unwrap();let request=read_request(&mut stream).await;assert!(request["messages"][1]["content"].as_str().unwrap().contains("Fix add"));assert!(!request["messages"][1]["content"].as_str().unwrap().contains("CHANGED"));reply(&mut stream,None).await;});
+    let mut reviewer=Approved{deny_tools:false,reviews:vec![]};let mut resumed=options(None);resumed.task="CHANGED".into();resumed.steps=100;resumed.deadline_seconds=3600;
+    let result=chat::run_controlled(&project,Path::new("state"),config,resumed,&mut reviewer,CancellationToken::new(),chat::Controls{resume:Some((run,before.digest().unwrap())),detached:false,external_reviews:false}).await.unwrap();server.await.unwrap();assert_eq!(result.run,run);assert_eq!(result.steps,2);
+    let after=rivet::lifecycle::inspect(&project,Path::new("state"),run).unwrap();assert_eq!(after.state,"completed");assert_eq!(after.spec.task,before.spec.task);assert_eq!(after.spec.deadline,before.spec.deadline);assert_eq!(after.spec.step_budget,before.spec.step_budget);assert!(after.remaining_ms<=before.remaining_ms);assert_eq!(after.version,2);
+}

@@ -1,0 +1,2 @@
+CREATE TABLE run_specs(run_id TEXT NOT NULL REFERENCES runs(id),version INTEGER NOT NULL,document TEXT NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(run_id,version));
+CREATE TABLE run_lifecycle(run_id TEXT PRIMARY KEY REFERENCES runs(id),status TEXT NOT NULL,revision INTEGER NOT NULL,steps INTEGER NOT NULL,last_wall INTEGER NOT NULL,remaining_ms INTEGER NOT NULL,detached INTEGER NOT NULL CHECK(detached IN(0,1)),checkpoint TEXT NOT NULL,root_task TEXT NOT NULL REFERENCES tasks(id),root_actor TEXT NOT NULL REFERENCES agents(id));

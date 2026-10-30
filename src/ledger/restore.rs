@@ -16,8 +16,11 @@ struct Marker {version:u32,review:RestoreReview,sibling:String,old:(u64,u64),new
 #[derive(Debug,Serialize)]
 pub struct RestoreReport {pub project:ProjectId,pub displaced_state:PathBuf,pub stopped_workers:usize,pub state:&'static str}
 fn valid_backup(name:&str)->bool{
-    let Some(id)=name.strip_prefix("backup-").or_else(||name.strip_prefix("pre-v3-")).or_else(||name.strip_prefix("pre-v4-")).and_then(|s|s.strip_suffix(".sqlite"))else{return false;};
-    uuid::Uuid::parse_str(id).is_ok()&&!name.contains('/')
+    if name.contains('/'){return false;}
+    let stem=if let Some(stem)=name.strip_prefix("backup-"){stem}else if let Some(pre)=name.strip_prefix("pre-v"){
+        let Some((version,stem))=pre.split_once('-')else{return false;};if !version.parse::<u32>().is_ok_and(|v|(3..=SCHEMA_VERSION).contains(&v)){return false;}stem
+    }else{return false;};
+    stem.strip_suffix(".sqlite").is_some_and(|id|uuid::Uuid::parse_str(id).is_ok())
 }
 fn valid_digest(s:&str)->bool{s.len()==64&&s.bytes().all(|b|b.is_ascii_digit()||(b'a'..=b'f').contains(&b))}
 fn refs(db:&Connection)->Result<Vec<crate::artifacts::ArtifactRef>>{
@@ -43,14 +46,15 @@ fn selected(root:&StateRoot,name:&str)->Result<(Bundle,Dir,String)>{
     if !valid_backup(name){return Err(Error::Invalid);}
     let assets=storage::directory(&root.dir,Path::new(&format!("{name}.assets")),false)?;
     let bytes=storage::read(&assets,"manifest.json",1024*1024)?;let manifest:Bundle=serde_json::from_slice(&bytes).map_err(|_|Error::State)?;
-    if manifest.version!=1||![1,2,3,4].contains(&manifest.schema)||!valid_digest(&manifest.database.digest){return Err(Error::Unsupported);}
+    if manifest.version!=1||!(1..=SCHEMA_VERSION).contains(&manifest.schema)||!valid_digest(&manifest.database.digest){return Err(Error::Unsupported);}
     let img=image(&root.dir,name)?;if img.digest!=manifest.database.digest||img.size!=manifest.database.size{return Err(Error::Conflict);}
     for suffix in ["-wal","-shm","-journal"]{if root.dir.symlink_metadata(format!("{name}{suffix}")).is_ok(){return Err(Error::Recovery);}}
     let db=Connection::open_with_flags(format!("file:/proc/self/fd/{}/{name}?immutable=1&mode=ro",root.dir.as_raw_fd()),OpenFlags::SQLITE_OPEN_READ_ONLY|OpenFlags::SQLITE_OPEN_URI|OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
     settings(&db,false)?;check_schema(&db)?;
     let quick:String=db.query_row("PRAGMA quick_check",[],|r|r.get(0))?;if quick!="ok"||db.prepare("PRAGMA foreign_key_check")?.query([])?.next()?.is_some(){return Err(Error::State);}
     let project:String=db.query_row("SELECT project_uuid FROM meta",[],|r|r.get(0))?;
-    if project!=manifest.project.0.to_string()||serde_json::to_vec(&refs(&db)?).ok()!=serde_json::to_vec(&manifest.artifacts).ok(){return Err(Error::Conflict);}
+    let schema:u32=db.query_row("SELECT schema_version FROM meta",[],|r|r.get(0))?;
+    if schema!=manifest.schema||project!=manifest.project.0.to_string()||serde_json::to_vec(&refs(&db)?).ok()!=serde_json::to_vec(&manifest.artifacts).ok(){return Err(Error::Conflict);}
     let mut total=manifest.database.size;
     for reference in &manifest.artifacts{if !valid_digest(&reference.digest)||reference.size>64*1024*1024{return Err(Error::Invalid);}let bytes=storage::read(&assets,&reference.digest,64*1024*1024)?;total=total.checked_add(bytes.len() as u64).ok_or(Error::Unsupported)?;if total>320*1024*1024||bytes.len() as u64!=reference.size||crate::tools::sha256(&bytes)!=reference.digest{return Err(Error::State);}}
     Ok((manifest,assets,crate::tools::sha256(&bytes)))
@@ -80,10 +84,12 @@ fn stage_database(root:&StateRoot,review:&RestoreReview,workers:&[storage::Worke
     let tx=db.transaction()?;let schema:u32=tx.query_row("SELECT schema_version FROM meta",[],|r|r.get(0))?;
     if schema==1{tx.execute_batch(include_str!("budget.sql"))?;}if schema<3{tx.execute_batch(include_str!("recovery.sql"))?;}
     if schema<4{tx.execute_batch(include_str!("reconciliation.sql"))?;}
+    if schema<5{tx.execute_batch(include_str!("lifecycle.sql"))?;}
+    tx.execute("UPDATE run_lifecycle SET status='recovery-required',revision=revision+1",[])?;
     tx.execute("DELETE FROM recovery_resolutions",[])?;
     let epoch:i64=tx.query_row("SELECT owner_epoch FROM meta",[],|r|r.get(0))?;
     let epoch=epoch.max(workers.iter().map(|w|sql_integer(w.epoch)).collect::<Result<Vec<_>>>()?.into_iter().max().unwrap_or(0)).checked_add(1).ok_or(Error::State)?;
-    tx.execute("UPDATE meta SET schema_version=4,owner_epoch=?1",[epoch])?;
+    tx.execute("UPDATE meta SET schema_version=5,owner_epoch=?1",[epoch])?;
     tx.execute("DELETE FROM grants",[])?;
     tx.execute("UPDATE operations SET state=CASE WHEN state IN ('proposed','authorized') THEN 'denied' WHEN state='receipt-recorded' THEN 'terminal' ELSE 'outcome-unknown' END,revision=revision+1 WHERE state NOT IN ('terminal','denied')",[])?;
     tx.execute("UPDATE runs SET state='recovery-required',revision=revision+1",[])?;
@@ -177,7 +183,7 @@ pub(super) fn state_usage(root:&Dir)->Result<u64>{
     fn visit(dir:&Dir,count:&mut usize,depth:usize)->Result<u64>{
         if depth>32{return Err(Error::Unsupported);}let mut total=0u64;
         for entry in dir.entries()?{*count+=1;if *count>16384{return Err(Error::Unsupported);}let name=entry?.file_name();let m=dir.symlink_metadata(&name)?;
-            let size=if m.is_dir(){visit(&storage::directory(dir,Path::new(&name),false)?,count,depth+1)?}else if m.is_file()&&m.nlink()==1{m.len()}else{return Err(Error::State);};
+            let size=if m.is_dir(){visit(&storage::directory(dir,Path::new(&name),false)?,count,depth+1)?}else if m.is_file()&&m.nlink()==1{m.len()}else{use cap_std::fs::FileTypeExt;if name==std::ffi::OsStr::new("control.sock")&&m.file_type().is_socket()&&m.uid()==dir.dir_metadata()?.uid()&&m.mode()&0o777==0o600{0}else{return Err(Error::State);}};
             total=total.checked_add(size).ok_or(Error::Unsupported)?;
         }Ok(total)
     }
@@ -234,11 +240,12 @@ mod tests {
     }
     #[tokio::test]
     async fn unsafe_restore_inputs_are_refused_before_activation(){
-        for case in ["newer","database","blob","symlink","project","missing-main"]{
+        for case in ["newer","schema-mismatch","database","blob","symlink","project","missing-main"]{
             let root=fixture();let project=Project::open(root.path()).unwrap();let (backup,_)=prepared(&project).await;
             let state=StateRoot::acquire(&project,Path::new("state"),false).unwrap().unwrap();let (mut manifest,assets,_)=selected(&state,&backup.name).unwrap();let before=identity(&state.dir).unwrap();
             match case{
                 "newer"=>{manifest.schema=999;storage::json(&assets,"manifest.json",&manifest,true).unwrap();},
+                "schema-mismatch"=>{manifest.schema=1;storage::json(&assets,"manifest.json",&manifest,true).unwrap();},
                 "database"=>std::fs::write(root.path().join("state").join(&backup.name),b"bad backup").unwrap(),
                 "blob"=>std::fs::write(root.path().join("state").join(format!("{}.assets",backup.name)).join(&manifest.artifacts[0].digest),b"bad blob").unwrap(),
                 "symlink"=>{let name=&manifest.artifacts[0].digest;assets.remove_file(name).unwrap();std::os::unix::fs::symlink("../../sentinel",root.path().join("state").join(format!("{}.assets",backup.name)).join(name)).unwrap();},
