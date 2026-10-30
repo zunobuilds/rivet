@@ -123,3 +123,8 @@ See [P2a acceptance](p2a-acceptance.md): schema 4, asset bundles, restartable di
 ## 30 October 2026 — P3b model/resource policies
 
 [P3b evidence](p3b-models.md) records schema 7 atomic instance/KV/budget reservations, actual concurrent synthetic HTTP streams, serial relay/evidence handoffs and explicit owner-observed activation/resource completion, plus bounded read-only llmfit 1.1.17 whole-hierarchy ranking. Two source-only registry archives were checksum-verified; no binaries/models or Cargo dependency changes. Known context ceilings are now enforced. P3c remains next.
+
+
+## 30 October 2026 — P3c local Mesh / bounded Adaptive
+
+[P3c evidence](p3c-mesh-adaptive.md): schema 8 preserves graph/role history during quiescent, policy-bound composition changes; local peers have deterministic single ownership and main-chat conflict escalation. Synthetic Mesh and Pair→Solo execution, revocation, budgets and no-replay conflict resume pass alongside earlier qualification. P2a–P3c is complete in the recorded bounded profiles. STOP before P4; no push or automatic acquisition.

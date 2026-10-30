@@ -87,6 +87,7 @@ fn stage_database(root:&StateRoot,review:&RestoreReview,workers:&[storage::Worke
     if schema<5{tx.execute_batch(include_str!("lifecycle.sql"))?;}
     if schema<6{tx.execute_batch(include_str!("coordination.sql"))?;}
     if schema<7{tx.execute_batch(include_str!("model_pool.sql"))?;}
+    if schema<8{tx.execute_batch(include_str!("adaptive.sql"))?;}
     tx.execute("UPDATE run_lifecycle SET status='recovery-required',revision=revision+1",[])?;
     tx.execute("DELETE FROM recovery_resolutions",[])?;
     let epoch:i64=tx.query_row("SELECT owner_epoch FROM meta",[],|r|r.get(0))?;

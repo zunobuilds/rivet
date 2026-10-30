@@ -29,7 +29,7 @@ pub async fn run_configured(project:&Project,state:&Path,config:ProviderConfig,o
         let graph=ledger.graph(*run).await?;
         for node in graph.nodes.iter().filter(|n|n.lease.is_some()){
             let current=ledger.graph(*run).await?;ledger.coordinate(current.revision,Command::Reconcile{run:*run,task:node.task.id}).await?;
-        }ledger.lifecycle(*run).await?.spec
+        }let graph=ledger.graph(*run).await?;if graph.nodes.iter().any(|n|n.state==Status::WaitingInput){ledger.coordinate(graph.revision,Command::ResumeConflicts{run:*run}).await?;}ledger.lifecycle(*run).await?.spec
     }else{
         if options.session.is_none(){ledger.transition(0,Transition::NewSession{id:session}).await?;}
         let spec=RunSpec{schema_version:1,project:ledger.project_id(),session,run:RunId::default(),task:plan.root().description.clone(),mode:plan.mode.clone(),roles:plan.agents.iter().map(|a|a.role.clone()).collect(),provider:Some(execution.as_ref().map(|p|crate::model_pool::digest(p).map(|d|format!("model-pool:{d}"))).transpose()?.unwrap_or_else(||config.profile.clone())),deadline:now()?.checked_add(options.deadline_seconds).ok_or(Error::Invalid)?,step_budget:options.steps,permission_epoch:ledger.epoch()};
@@ -42,7 +42,7 @@ pub async fn run_configured(project:&Project,state:&Path,config:ProviderConfig,o
     let plane=crate::ledger::control::Plane::bind(&ledger,initial.clone())?;plane.handle.update_graph(ledger.graph(spec.run).await?)?;let disconnect=if controls.external_reviews{CancellationToken::new()}else{reviewer.disconnected().unwrap_or_default()};let mut external=plane.handle.clone();let reviewer:&mut dyn Reviewer=if controls.external_reviews{&mut external}else{reviewer};
     let files=Arc::new(FileWorkspace::new(Project::open(project.path())?,state)?);let mcp=Arc::new(crate::mcp::Workspace::new(project,options.mcp)?);let supervisor=Supervisor::default();let mut broker=Broker::new(spec.permission_epoch);let mut states=HashMap::<TaskId,AgentState>::new();
     let mut report=ChatReport{session,run:spec.run,steps:initial.steps,result:String::new(),revisions:vec![],checks:vec![]};
-    let mut world=World{project,ledger:&ledger,spec:&spec,supervisor:&supervisor,broker:&mut broker,files,mcp,config:&config,credential:options.credential,cost:options.request_cost_micros,pool:None};
+    let mut world=World{project,ledger:&ledger,spec:spec.clone(),supervisor:&supervisor,broker:&mut broker,files,mcp,config:&config,credential:options.credential,cost:options.request_cost_micros,pool:None};
     let mut inflight=tokio::task::JoinSet::new();
     let result={let cancel=plane.handle.cancel.clone();let work=async{
         loop{
@@ -53,13 +53,16 @@ pub async fn run_configured(project:&Project,state:&Path,config:ProviderConfig,o
             }
             let graph=ledger.graph(spec.run).await?;plane.handle.update_graph(graph.clone())?;if graph.done(){return Ok(());}
             let model=ledger.model_state(spec.run).await?;plane.handle.update_model(model.clone())?;
+            if let Some(model)=&model{if model.policy.adaptive.is_some()&&inflight.is_empty()&&states.values().all(|s|s.is_inference())&&graph.nodes.iter().all(|n|n.lease.is_none()){
+                let version=ledger.lifecycle(spec.run).await?.version;ledger.model_command(model.revision,crate::ledger::model_pool::Command::Adapt{run:spec.run}).await?;let current=ledger.lifecycle(spec.run).await?;if current.version!=version{world.broker.revoke_all();*world.broker=Broker::new(current.spec.permission_epoch);world.spec=current.spec;states.clear();plane.handle.update(ledger.lifecycle(spec.run).await?)?;continue;}
+            }}
             if let Some(model)=&model{if model.policy.behavior==crate::model_pool::Behavior::Relay{
                 if model.activation.is_some(){return Err(Error::Unsupported);}let phase=model.policy.phases.get(model.phase).ok_or(Error::Recovery)?;
                 let done=phase.tasks.iter().all(|i|graph.nodes.get(*i).is_some_and(|n|match phase.goal{crate::model_pool::PhaseGoal::Succeeded=>n.state==Status::Succeeded,crate::model_pool::PhaseGoal::WaitingOrSucceeded=>matches!(n.state,Status::WaitingChildren|Status::Succeeded)}));
                 if done&&model.phase_approved{ledger.model_command(model.revision,crate::ledger::model_pool::Command::Advance{run:spec.run}).await?;states.clear();continue;}
                 if !model.phase_approved{let proposal=model.phase_proposal()?;let digest=crate::model_pool::digest(&proposal)?;if !crate::chat::approve(reviewer,&cancel,spec.deadline,Review{kind:"relay-phase",scope:serde_json::json!({"proposal":proposal,"review_digest":digest,"handoff":"ledger artifacts only; no hidden model state","activation":"already-resident profiles only; unloaded targets wait for explicit owner-observed activation"})}).await?{return Err(Error::Denied);}let handoff=graph.nodes.iter().flat_map(|n|n.evidence.checks.iter().map(|c|c.artifact.clone())).take(128).collect();ledger.model_command(model.revision,crate::ledger::model_pool::Command::Phase{run:spec.run,approved:digest,handoff}).await?;continue;}
             }}
-            let chosen=graph.next_eligible(now()?,|id|model.as_ref().is_none_or(|m|{let Some(node)=graph.nodes.iter().position(|n|n.task.id==id)else{return false;};let actor=graph.plan.agents.iter().position(|a|a.id==graph.nodes[node].task.actor).unwrap_or(usize::MAX);m.eligible(graph.nodes[node].task.actor,actor,node)}));
+            let chosen=graph.next_eligible(now()?,|id|model.as_ref().is_none_or(|m|{let Some(node)=graph.nodes.iter().position(|n|n.task.id==id)else{return false;};let Some(owner)=graph.claim_actor(id)else{return false;};let actor=graph.plan.agents.iter().position(|a|a.id==owner).unwrap_or(usize::MAX);m.eligible(owner,actor,node)}));
             let Some(task)=chosen else{if inflight.is_empty(){return Err(Error::Recovery);}let (task,claim,collected)=inflight.join_next().await.ok_or(Error::State)?.map_err(|_|Error::State)?;let agent=states.get_mut(&task).ok_or(Error::State)?;let step=world.accept(agent,&claim,collected).await?;complete_step(&ledger,&spec,&mut report,task,claim,step).await?;continue;};
             ledger.coordinate(graph.revision,Command::Claim{run:spec.run,task,now:now()?,expires:spec.deadline}).await?;let graph=ledger.graph(spec.run).await?;let claim=graph.node(task)?.lease.clone().ok_or(Error::State)?;
             if let std::collections::hash_map::Entry::Vacant(entry)=states.entry(task){entry.insert(AgentState::new(&graph,task,&options.skills)?);}

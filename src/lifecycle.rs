@@ -40,7 +40,7 @@ pub(crate) fn snapshot(db:&rusqlite::Connection,run:RunId)->Result<Snapshot>{
 pub(crate) fn uncertain(db:&rusqlite::Connection,run:RunId)->Result<bool>{
     Ok(db.query_row("SELECT EXISTS(SELECT 1 FROM operations WHERE run_id=?1 AND state NOT IN ('terminal','denied','reconciled-observed','abandoned-unknown')) OR EXISTS(SELECT 1 FROM inference_reservations i WHERE run_id=?1 AND state IN ('reserved','unknown') AND NOT EXISTS(SELECT 1 FROM recovery_resolutions x WHERE x.entity_id=i.request_id AND x.entity_kind='request' AND x.source_digest=i.request_digest))",[run.0.to_string()],|r|r.get(0))?)
 }
-fn spec_record(tx:&Transaction<'_>,spec:&RunSpec,version:u64)->Result<()>{let document=serde_json::to_string(spec).map_err(|_|Error::Invalid)?;tx.execute("INSERT INTO run_specs VALUES(?1,?2,?3,?4)",params![spec.run.0.to_string(),number(version)?,document,crate::tools::sha256(document.as_bytes())])?;Ok(())}
+pub(crate) fn spec_record(tx:&Transaction<'_>,spec:&RunSpec,version:u64)->Result<()>{let document=serde_json::to_string(spec).map_err(|_|Error::Invalid)?;tx.execute("INSERT INTO run_specs VALUES(?1,?2,?3,?4)",params![spec.run.0.to_string(),number(version)?,document,crate::tools::sha256(document.as_bytes())])?;Ok(())}
 pub(crate) fn apply(tx:&Transaction<'_>,command:Command,revision:u64,epoch:u64)->Result<()> {
     let (run,kind)=match &command{Command::Admit{spec,..}=>(spec.run,"lifecycle-admitted"),Command::Tick{run,..}=>(*run,"checkpoint"),Command::Finish{run,state,..}=>(*run,state.name()),Command::Resume{run,..}=>(*run,"explicit-resume"),Command::Inspect{run,..}=>(*run,"inspect"),Command::Stop{run,..}=>(*run,"stopped")};
     if let Command::Inspect{result,..}=command{*result.lock().map_err(|_|Error::State)?=Some(snapshot(tx,run)?);return Ok(());}

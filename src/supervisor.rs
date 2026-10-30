@@ -48,7 +48,7 @@ mod tests {
         let mut spec = spec(); assert!(spec.validate().is_ok());
         spec.roles.push(Role::Independent); assert!(spec.validate().is_err());
         spec.roles = vec![Role::Independent];
-        for mode in [Mode::Pair,Mode::Crew,Mode::Fleet,Mode::Mesh,Mode::Adaptive] { spec.mode = mode; assert!(matches!(spec.validate(), Err(Error::Invalid|Error::Unsupported))); }
+        for mode in [Mode::Pair,Mode::Crew,Mode::Fleet,Mode::Adaptive] { spec.mode = mode; assert!(matches!(spec.validate(), Err(Error::Invalid|Error::Unsupported))); }
         let supervisor = Supervisor::default();
         let started = Arc::new(AtomicUsize::new(0)); let (tx,_rx) = mpsc::channel(1);
         assert!(matches!(supervisor.drive(&spec,Fake {proposal:None,started:started.clone(),closed:Arc::new(AtomicUsize::new(0))},InferRequest {schema_version:1,id:RequestId::default(),prompt:"must not start".into(),context:None},tx),Err(Error::Unsupported)));

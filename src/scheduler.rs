@@ -22,7 +22,7 @@ pub struct Task {pub id:TaskId,pub parent:Option<TaskId>,pub dependencies:Vec<Ta
 pub struct Plan {pub schema_version:u32,pub mode:Mode,pub agents:Vec<Agent>,pub tasks:Vec<Task>,pub recipients:Vec<(ActorId,ActorId)>}
 #[derive(Clone,Copy,Debug,Serialize,Deserialize,PartialEq,Eq)]
 #[serde(rename_all="snake_case")]
-pub enum Status {Pending,Ready,Running,WaitingChildren,Reconciling,Succeeded,Failed,Cancelled}
+pub enum Status {Pending,Ready,Running,WaitingChildren,WaitingInput,Reconciling,Succeeded,Failed,Cancelled}
 #[derive(Clone,Debug,Serialize,Deserialize,PartialEq,Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Claim {pub task:TaskId,pub actor:ActorId,pub fence:u64,pub epoch:u64,pub expires:u64,pub issued_sequence:u64}
@@ -47,7 +47,7 @@ pub struct Reviewed {pub task:TaskId,pub evidence:Evidence}
 pub struct ReviewResult {pub decision:ReviewDecision,pub subjects:Vec<Reviewed>}
 #[derive(Clone,Debug,Serialize,Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Node {#[serde(default)]pub stale:Vec<PathBuf>,#[serde(default)]pub received:Vec<MessageId>,pub task:Task,pub state:Status,pub revision:u64,pub fence:u64,pub lease:Option<Claim>,pub evidence:Evidence,pub review:Option<ReviewResult>}
+pub struct Node {#[serde(default)]pub owner_assigned:bool,#[serde(default)]pub conflicts:Vec<(OperationId,u64)>,#[serde(default)]pub stale:Vec<PathBuf>,#[serde(default)]pub received:Vec<MessageId>,pub task:Task,pub state:Status,pub revision:u64,pub fence:u64,pub lease:Option<Claim>,pub evidence:Evidence,pub review:Option<ReviewResult>}
 #[derive(Clone,Debug,Serialize,Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Queue {parent:Option<TaskId>,ready:VecDeque<TaskId>}
@@ -64,14 +64,14 @@ impl Plan {
         let roots=self.tasks.iter().filter(|t|t.parent.is_none()).collect::<Vec<_>>();if roots.len()!=1||roots[0].kind!=Kind::Coordinate||!roots[0].required{return Err(Error::Invalid);}
         for agent in &self.agents{
             if agent.skills.len()>16||agent.skills.iter().any(|s|s.is_empty()||s.len()>64||s.chars().any(char::is_control))||agent.reports_to==Some(agent.id){return Err(Error::Invalid);}
-            let expected=match(&self.mode,&agent.role){(Mode::Solo,Role::Independent)|(Mode::Pair|Mode::Crew,Role::Lead)|(Mode::Fleet,Role::Director)=>None,(Mode::Fleet,Role::Lead)=>Some(Role::Director),(_,Role::Operator|Role::Reviewer)=>Some(Role::Lead),_=>return Err(Error::Invalid)};
+            let expected=match(&self.mode,&agent.role){(Mode::Solo|Mode::Mesh,Role::Independent)|(Mode::Pair|Mode::Crew,Role::Lead)|(Mode::Fleet,Role::Director)=>None,(Mode::Fleet,Role::Lead)=>Some(Role::Director),(_,Role::Operator|Role::Reviewer)=>Some(Role::Lead),_=>return Err(Error::Invalid)};
             match expected{None if agent.reports_to.is_some()=>return Err(Error::Invalid),Some(role)=>if !self.agents.iter().any(|a|Some(a.id)==agent.reports_to&&a.role==role){return Err(Error::Invalid);},_=>()}
         }
         let root_agent=self.agents.iter().find(|a|a.id==roots[0].actor).ok_or(Error::Invalid)?;if root_agent.reports_to.is_some(){return Err(Error::Invalid);}
         for task in &self.tasks{
             if task.description.is_empty()||task.description.len()>4096||task.dependencies.len()>32||task.writes.len()>32||!agents.contains(&task.actor)||task.dependencies.iter().any(|id|*id==task.id||!ids.contains(id))||task.parent.is_some_and(|p|p==task.id||!ids.contains(&p)){return Err(Error::Invalid);}
             let actor=self.agents.iter().find(|a|a.id==task.actor).ok_or(Error::Invalid)?;
-            if let Some(parent)=task.parent{let parent=self.tasks.iter().find(|t|t.id==parent).ok_or(Error::Invalid)?;if task.actor!=parent.actor&&actor.reports_to!=Some(parent.actor){return Err(Error::Denied);}}
+            if let Some(parent)=task.parent{let parent=self.tasks.iter().find(|t|t.id==parent).ok_or(Error::Invalid)?;if self.mode!=Mode::Mesh&&task.actor!=parent.actor&&actor.reports_to!=Some(parent.actor){return Err(Error::Denied);}}
             match &task.kind{
                 Kind::Coordinate if ![Role::Independent,Role::Lead,Role::Director].contains(&actor.role)=>return Err(Error::Invalid),
                 Kind::Coding if ![Role::Independent,Role::Operator].contains(&actor.role)=>return Err(Error::Invalid),
@@ -103,22 +103,27 @@ impl Plan {
     pub fn root(&self)->&Task{self.tasks.iter().find(|t|t.parent.is_none()).expect("validated single root")}
 }
 impl Graph {
-    pub fn new(plan:Plan)->Result<Self>{plan.validate()?;let nodes=plan.tasks.iter().cloned().map(|task|Node{stale:vec![],received:vec![],task,state:Status::Pending,revision:0,fence:0,lease:None,evidence:Evidence::default(),review:None}).collect();let mut graph=Self{plan,nodes,revision:0,queues:vec![],cursor:0};graph.refresh();Ok(graph)}
+    pub fn new(plan:Plan)->Result<Self>{plan.validate()?;let nodes=plan.tasks.iter().cloned().map(|task|Node{owner_assigned:plan.mode!=Mode::Mesh||task.kind!=Kind::Coding,conflicts:vec![],stale:vec![],received:vec![],task,state:Status::Pending,revision:0,fence:0,lease:None,evidence:Evidence::default(),review:None}).collect();let mut graph=Self{plan,nodes,revision:0,queues:vec![],cursor:0};graph.refresh();Ok(graph)}
     pub fn node(&self,id:TaskId)->Result<&Node>{self.nodes.iter().find(|n|n.task.id==id).ok_or(Error::Invalid)}
     fn index(&self,id:TaskId)->Result<usize>{self.nodes.iter().position(|n|n.task.id==id).ok_or(Error::Invalid)}
     fn enqueue(&mut self,id:TaskId){let parent=self.nodes.iter().find(|n|n.task.id==id).expect("known task").task.parent;if let Some(q)=self.queues.iter_mut().find(|q|q.parent==parent){if !q.ready.contains(&id){q.ready.push_back(id);}}else{self.queues.push(Queue{parent,ready:VecDeque::from([id])});}}
     fn children_done(&self,id:TaskId)->bool{self.nodes.iter().filter(|n|n.task.parent==Some(id)&&n.task.required).all(|n|n.state==Status::Succeeded&&n.stale.is_empty())}
+    pub fn rebuild_ready(&mut self){self.queues.clear();self.cursor=0;let ids=self.nodes.iter().filter(|n|n.state==Status::Ready).map(|n|n.task.id).collect::<Vec<_>>();for id in ids{self.enqueue(id);}self.refresh();}
     pub fn refresh(&mut self){let ready=self.nodes.iter().filter(|n|(n.state==Status::Pending&&n.task.dependencies.iter().all(|d|self.node(*d).is_ok_and(|d|d.state==Status::Succeeded)))||(n.state==Status::WaitingChildren&&self.children_done(n.task.id))).map(|n|n.task.id).collect::<Vec<_>>();for id in ready{let i=self.index(id).expect("known");self.nodes[i].state=Status::Ready;self.enqueue(id);}}
     pub fn next(&self,now:u64)->Option<TaskId>{self.next_eligible(now, |_|true)}
     pub fn next_eligible(&self,now:u64,eligible:impl Fn(TaskId)->bool)->Option<TaskId>{
         for offset in 0..self.queues.len(){let queue=&self.queues[(self.cursor+offset)%self.queues.len()];let Some(id)=queue.ready.front()else{continue;};let node=self.node(*id).ok()?;
-            if !eligible(*id)||node.state!=Status::Ready||node.lease.as_ref().is_some_and(|l|l.expires<=now){continue;}
+            if self.claim_actor(*id).is_none()||!eligible(*id)||node.state!=Status::Ready||node.lease.as_ref().is_some_and(|l|l.expires<=now){continue;}
             if self.nodes.iter().filter(|other|other.task.id!=*id&&other.lease.is_some()).any(|other|node.task.writes.iter().any(|a|other.task.writes.iter().any(|b|overlap(a,b)))){continue;}
             return Some(*id);
         }None
     }
+    pub fn claim_actor(&self,id:TaskId)->Option<ActorId>{let node=self.node(id).ok()?;if self.plan.mode!=Mode::Mesh||node.owner_assigned||node.task.kind!=Kind::Coding{return Some(node.task.actor);}
+        self.plan.agents.iter().filter(|a|!self.nodes.iter().any(|n|n.lease.as_ref().is_some_and(|c|c.actor==a.id))).min_by_key(|a|(self.nodes.iter().filter(|n|n.task.actor==a.id&&n.owner_assigned&&!matches!(n.state,Status::Succeeded|Status::Failed|Status::Cancelled)).count(),a.id.0)).map(|a|a.id)
+    }
+    pub fn resume_conflicts(&mut self){let ids=self.nodes.iter_mut().filter(|n|n.state==Status::WaitingInput).map(|n|{n.state=Status::Ready;n.revision+=1;n.task.id}).collect::<Vec<_>>();for id in ids{self.enqueue(id);}}
     pub fn claim(&mut self,id:TaskId,epoch:u64,now:u64,expires:u64,sequence:u64)->Result<Claim>{
-        if expires<=now||expires-now>3600||self.next(now)!=Some(id){return Err(Error::Conflict);}let i=self.index(id)?;
+        if expires<=now||expires-now>3600||self.next(now)!=Some(id){return Err(Error::Conflict);}let i=self.index(id)?;let actor=self.claim_actor(id).ok_or(Error::Denied)?;self.nodes[i].task.actor=actor;self.nodes[i].owner_assigned=true;
         let claim=if let Some(claim)=&self.nodes[i].lease{if claim.epoch!=epoch{return Err(Error::Denied);}claim.clone()}else{self.nodes[i].fence=self.nodes[i].fence.checked_add(1).ok_or(Error::State)?;Claim{task:id,actor:self.nodes[i].task.actor,fence:self.nodes[i].fence,epoch,expires,issued_sequence:sequence}};
         let queue=self.queues.iter().position(|q|q.ready.front()==Some(&id)).ok_or(Error::Conflict)?;self.queues[queue].ready.pop_front();self.cursor=(queue+1)%self.queues.len();self.nodes[i].state=Status::Running;self.nodes[i].lease=Some(claim.clone());self.nodes[i].revision+=1;Ok(claim)
     }
@@ -143,6 +148,7 @@ impl Graph {
 }
 
 pub fn template(mode:Mode,task:&str,paths:Vec<PathBuf>)->Result<Plan>{
+    if mode==Mode::Mesh{return mesh_template(task,paths,2);}
     if task.is_empty()||task.len()>4096{return Err(Error::Invalid);}let root_actor=ActorId::default();let lead=if mode==Mode::Fleet{ActorId::default()}else{root_actor};let operator=if mode==Mode::Solo{root_actor}else{ActorId::default()};let reviewer=ActorId::default();
     let mut agents=vec![Agent{id:root_actor,role:if mode==Mode::Solo{Role::Independent}else if mode==Mode::Fleet{Role::Director}else{Role::Lead},reports_to:None,skills:vec![]}];
     if mode==Mode::Fleet{agents.push(Agent{id:lead,role:Role::Lead,reports_to:Some(root_actor),skills:vec![]});}
@@ -154,4 +160,8 @@ pub fn template(mode:Mode,task:&str,paths:Vec<PathBuf>)->Result<Plan>{
     tasks.push(Task{id:code,parent:Some(group),dependencies:vec![],actor:operator,description:format!("Perform this explicitly scoped task, preserving declared paths and supplying exact tested revision evidence: {task}"),kind:Kind::Coding,criterion:if paths.is_empty(){Criterion::Text}else{Criterion::Checked{paths:paths.clone()}},writes:paths.into_iter().map(Resource::Path).collect(),required:true});
     if matches!(mode,Mode::Crew|Mode::Fleet){tasks.push(Task{id:TaskId::default(),parent:Some(group),dependencies:vec![code],actor:reviewer,description:"Independently evaluate the required coding task's exact recorded revisions and checks. Read relevant source through reviewed tools. Return only technical_review_format JSON; request_changes if insufficient. This grants no user tool permission.".into(),kind:Kind::Review{subjects:vec![code]},criterion:Criterion::Text,writes:vec![],required:true});}
     let recipients=agents.iter().filter_map(|a|a.reports_to.map(|p|[(a.id,p),(p,a.id)])).flatten().collect();let plan=Plan{schema_version:1,mode,agents,tasks,recipients};plan.validate()?;Ok(plan)
+}
+
+pub fn mesh_template(task:&str,paths:Vec<PathBuf>,peers:u32)->Result<Plan>{
+    if peers==0||peers>32||task.is_empty()||task.len()>3800{return Err(Error::Invalid);}let mut agents=(0..peers).map(|_|Agent{id:ActorId::default(),role:Role::Independent,reports_to:None,skills:vec![]}).collect::<Vec<_>>();agents.sort_by_key(|a|a.id.0);let root=TaskId::default();let mut tasks=vec![Task{id:root,parent:None,dependencies:vec![],actor:agents[0].id,description:task.into(),kind:Kind::Coordinate,criterion:Criterion::Text,writes:vec![],required:true}];for (i,a) in agents.iter().enumerate(){tasks.push(Task{id:TaskId::default(),parent:Some(root),dependencies:vec![],actor:a.id,description:format!("Mesh peer subtask {i} in the explicitly approved parent scope: {task}. Own only this task; conflicts go to the main chat."),kind:Kind::Coding,criterion:if paths.is_empty(){Criterion::Text}else{Criterion::Checked{paths:paths.clone()}},writes:paths.iter().cloned().map(Resource::Path).collect(),required:true});}let recipients=agents.iter().flat_map(|a|agents.iter().filter(move|b|b.id!=a.id).map(move|b|(a.id,b.id))).collect();let plan=Plan{schema_version:1,mode:Mode::Mesh,agents,tasks,recipients};plan.validate()?;Ok(plan)
 }

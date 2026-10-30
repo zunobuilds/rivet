@@ -37,3 +37,5 @@ pub mod hierarchy;
 pub mod model_pool;
 
 pub mod cookbook;
+
+pub mod adaptive;

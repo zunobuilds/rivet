@@ -26,9 +26,10 @@ pub enum Command {
 }
 #[derive(Subcommand)]
 pub enum RunCommand {
+    Adaptive{run:uuid::Uuid,#[arg(long,value_enum)]allow:Vec<ModeArg>,#[arg(long)]approve:Option<String>,#[arg(long)]state_dir:Option<PathBuf>},
     Pool{run:uuid::Uuid,#[arg(long)]state_dir:Option<PathBuf>,#[arg(long)]observation:Option<PathBuf>,#[arg(long)]approve:Option<String>},
     Forward{run:uuid::Uuid,#[arg(long)]recipient:uuid::Uuid,#[arg(long)]scope:String,#[arg(long)]decision:String,#[arg(long)]approve:Option<String>,#[arg(long)]state_dir:Option<PathBuf>},
-    Template{#[arg(long)]mode:ModeArg,#[arg(long)]task:String,#[arg(long)]paths:Vec<PathBuf>,#[arg(long)]minimal:bool},
+    Template{#[arg(long)]mode:ModeArg,#[arg(long)]peers:Option<u32>,#[arg(long)]task:String,#[arg(long)]paths:Vec<PathBuf>,#[arg(long)]minimal:bool},
     Hierarchy{#[arg(long)]plan:PathBuf,#[arg(long)]execution:Option<PathBuf>,#[arg(long)]approve:Option<String>,#[arg(long)]config:Option<PathBuf>,#[arg(long)]state_dir:Option<PathBuf>,#[arg(long,default_value_t=100)]steps:u32,#[arg(long,default_value_t=3600)]deadline_seconds:u64,#[arg(long,default_value_t=65536)]token_budget:u64,#[arg(long,default_value_t=0)]spend_ceiling_micros:u64,#[arg(long,default_value_t=0)]request_cost_micros:u64,#[arg(long)]ephemeral_key_stdin:bool,#[arg(long)]detach:bool,#[arg(long,hide=true)]detached_core:bool,#[arg(long)]minimal:bool},
     Status{run:uuid::Uuid,#[arg(long)]state_dir:Option<PathBuf>},
     Pause{run:uuid::Uuid,#[arg(long)]state_dir:Option<PathBuf>},
@@ -40,8 +41,8 @@ pub enum RunCommand {
 #[derive(Clone,clap::ValueEnum)]
 pub enum PreferenceArg {Efficient,Balanced,Ambitious}
 #[derive(Clone,clap::ValueEnum)]
-pub enum ModeArg {Solo,Pair,Crew,Fleet}
-impl ModeArg{fn mode(&self)->crate::domain::Mode{match self{Self::Solo=>crate::domain::Mode::Solo,Self::Pair=>crate::domain::Mode::Pair,Self::Crew=>crate::domain::Mode::Crew,Self::Fleet=>crate::domain::Mode::Fleet}}}
+pub enum ModeArg {Solo,Pair,Crew,Fleet,Mesh}
+impl ModeArg{fn mode(&self)->crate::domain::Mode{match self{Self::Solo=>crate::domain::Mode::Solo,Self::Pair=>crate::domain::Mode::Pair,Self::Crew=>crate::domain::Mode::Crew,Self::Fleet=>crate::domain::Mode::Fleet,Self::Mesh=>crate::domain::Mode::Mesh}}}
 #[derive(Subcommand)]
 pub enum RepairCommand {
     /// Review an uncertain operation; committing requires its exact observation digest.
@@ -77,12 +78,13 @@ pub async fn execute_controlled(cli:Cli,project:&Project,cancel:tokio_util::sync
         Command::Run{command}=>{
             use crate::ledger::control::{self,Action};use crate::domain::RunId;
             match command{
+                RunCommand::Adaptive{run,allow,approve,state_dir}=>output(crate::model_pool::restrict_modes(project,state(&state_dir),RunId(run),allow.iter().map(ModeArg::mode).collect(),approve.as_deref()).await?,true),
                 RunCommand::Pool{run,state_dir,observation,approve}=>{let run=RunId(run);if let Some(path)=observation{let observation=serde_json::from_slice(&project.input(&path)?).map_err(|_|crate::error::Error::Invalid)?;output(crate::model_pool::observe(project,state(&state_dir),run,observation,approve.as_deref()).await?,true);}else{match crate::ledger::model_inspect(project,state(&state_dir),run){Ok(value)=>output(json!({"model_pool":value}),true),Err(crate::error::Error::Busy)=>output(control::request(project,state(&state_dir),run,Action::Status).await?,true),Err(e)=>return Err(e)}}},
                 RunCommand::Forward{run,recipient,scope,decision,approve,state_dir}=>{
                     let run=RunId(run);let recipient=crate::domain::ActorId(recipient);let status=control::request(project,state(&state_dir),run,Action::Status).await?;let epoch=status["snapshot"]["spec"]["permission_epoch"].as_u64().ok_or(crate::error::Error::State)?;let digest=control::forward_digest(run,recipient,&scope,&decision,epoch)?;
                     if let Some(approved)=approve{if approved!=digest{return Err(crate::error::Error::Denied);}output(control::request(project,state(&state_dir),run,Action::Forward{recipient,scope,text:decision,epoch,approved}).await?,true);}else{output(json!({"run":run,"recipient":recipient,"scope":scope,"decision":decision,"epoch":epoch,"review_digest":digest,"forwarded":false}),true);}
                 },
-                RunCommand::Template{mode,task,paths,minimal}=>{let plan=crate::scheduler::template(mode.mode(),&task,paths)?;crate::domain::validate_roles(&plan.mode,&plan.agents.iter().map(|a|a.role.clone()).collect::<Vec<_>>(),minimal)?;output(serde_json::to_value(plan).map_err(|_|crate::error::Error::State)?,true);},
+                RunCommand::Template{mode,peers,task,paths,minimal}=>{let plan=if mode.mode()==crate::domain::Mode::Mesh{crate::scheduler::mesh_template(&task,paths,peers.unwrap_or(2))?}else{if peers.is_some(){return Err(crate::error::Error::Invalid);}crate::scheduler::template(mode.mode(),&task,paths)?};crate::domain::validate_roles(&plan.mode,&plan.agents.iter().map(|a|a.role.clone()).collect::<Vec<_>>(),minimal)?;output(serde_json::to_value(plan).map_err(|_|crate::error::Error::State)?,true);},
                 RunCommand::Hierarchy{plan,execution,approve,config,state_dir,steps,deadline_seconds,token_budget,spend_ceiling_micros,request_cost_micros,ephemeral_key_stdin,detach,detached_core,minimal}=>{
                     if detached_core{control::verify_detached()?;}
                     let plan:crate::scheduler::Plan=serde_json::from_slice(&project.input(&plan)?).map_err(|_|crate::error::Error::Invalid)?;plan.validate()?;crate::domain::validate_roles(&plan.mode,&plan.agents.iter().map(|a|a.role.clone()).collect::<Vec<_>>(),minimal)?;let execution:Option<crate::model_pool::Policy>=execution.as_ref().map(|p|project.input(p).and_then(|v|serde_json::from_slice(&v).map_err(|_|crate::error::Error::Invalid))).transpose()?;if let Some(policy)=&execution{policy.validate(plan.agents.len(),plan.tasks.len())?;}let digest=crate::hierarchy::admission_digest(&plan,execution.as_ref())?;

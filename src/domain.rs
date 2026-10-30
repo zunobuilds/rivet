@@ -76,6 +76,6 @@ pub fn validate_roles(mode:&Mode,roles:&[Role],minimal:bool)->Result<()>{
         Mode::Pair=>roles.len()==2&&n(Role::Lead)==1&&n(Role::Operator)==1,
         Mode::Crew=>n(Role::Lead)==1&&n(Role::Reviewer)==1&&n(Role::Operator)>=1&&roles.len()==2+n(Role::Operator),
         Mode::Fleet=>n(Role::Director)==1&&n(Role::Lead)>=1&&n(Role::Reviewer)>=1&&n(Role::Operator)>=1&&roles.len()==1+n(Role::Lead)+n(Role::Reviewer)+n(Role::Operator),
-        Mode::Mesh|Mode::Adaptive=>return Err(Error::Unsupported),
+        Mode::Mesh=>!roles.is_empty()&&roles.iter().all(|r|*r==Role::Independent),Mode::Adaptive=>return Err(Error::Unsupported),
     };if valid{Ok(())}else{Err(Error::Invalid)}
 }

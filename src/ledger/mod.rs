@@ -14,7 +14,7 @@ use std::{os::fd::AsRawFd, path::Path, thread::{self, JoinHandle}, time::{Durati
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-pub(crate) const SCHEMA_VERSION:u32=7;
+pub(crate) const SCHEMA_VERSION:u32=8;
 const DB: &str = "ledger.sqlite";
 const LOCK: &str = "owner.lock";
 const QUEUE: usize = 128;
@@ -260,6 +260,7 @@ impl Ledger {
             transaction.execute_batch(include_str!("lifecycle.sql"))?;
             transaction.execute_batch(include_str!("coordination.sql"))?;
             transaction.execute_batch(include_str!("model_pool.sql"))?;
+            transaction.execute_batch(include_str!("adaptive.sql"))?;
             transaction.execute("INSERT INTO meta VALUES(?1,?2,1,0)", params![SCHEMA_VERSION,ProjectId::default().0.to_string()])?;
             audit(&transaction, "project", "system", "initialized")?;
             transaction.commit()?;
@@ -280,6 +281,7 @@ impl Ledger {
         if version<5{transaction.execute_batch(include_str!("lifecycle.sql"))?;transaction.execute("UPDATE meta SET schema_version=5",[])?;audit(&transaction,"project","system","migrated-v4-v5")?;}
         if version<6{transaction.execute_batch(include_str!("coordination.sql"))?;transaction.execute("UPDATE meta SET schema_version=6",[])?;audit(&transaction,"project","system","migrated-v5-v6")?;}
         if version<7{transaction.execute_batch(include_str!("model_pool.sql"))?;transaction.execute("UPDATE meta SET schema_version=7",[])?;audit(&transaction,"project","system","migrated-v6-v7")?;}
+        if version<8{transaction.execute_batch(include_str!("adaptive.sql"))?;transaction.execute("UPDATE meta SET schema_version=8",[])?;audit(&transaction,"project","system","migrated-v7-v8")?;}
         transaction.execute("UPDATE run_lifecycle SET status='recovery-required',revision=revision+1 WHERE status='active'",[])?;
         transaction.execute("UPDATE runs SET state='recovery-required',revision=revision+1 WHERE id IN(SELECT run_id FROM run_lifecycle WHERE status='recovery-required')",[])?;
         transaction.execute("UPDATE meta SET owner_epoch=owner_epoch+1", [])?;
@@ -365,7 +367,7 @@ fn advance(tx: &Transaction<'_>, operation: OperationId, revision: u64, from: &s
 }
 fn apply(connection: &mut Connection, command: LedgerCommand, epoch: u64,state:&Dir) -> Result<()> {
     if command.schema_version != 1 || command.owner_epoch != epoch { return Err(Error::Conflict); }
-    if !matches!(&command.transition,Transition::Lifecycle{command:crate::lifecycle::Command::Inspect{..}}|Transition::ModelPool{command:model_pool::Command::Inspect{..}}|Transition::Coordination{command:crate::coordination::Command::Inspect{..}|crate::coordination::Command::Inbox{..}|crate::coordination::Command::NextSequence{..}}){ensure_space(state,512*1024)?;}
+    if !matches!(&command.transition,Transition::Lifecycle{command:crate::lifecycle::Command::Inspect{..}}|Transition::ModelPool{command:model_pool::Command::Inspect{..}}|Transition::Coordination{command:crate::coordination::Command::Inspect{..}|crate::coordination::Command::Inbox{..}|crate::coordination::Command::NextSequence{..}}){ensure_space(state,3*1024*1024)?;}
     let tx = connection.transaction()?;
     let actual: i64 = tx.query_row("SELECT owner_epoch FROM meta", [], |r| r.get(0))?;
     if actual != sql_integer(epoch)? { return Err(Error::Conflict); }
@@ -757,13 +759,15 @@ mod crash_boundaries {
             let temp=tempfile::tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join(".build/tmp")).unwrap();let project=Project::open(temp.path()).unwrap();
             let ledger=Ledger::open(&project,Path::new("state")).unwrap();let session=SessionId::default();ledger.transition(0,Transition::NewSession{id:session}).await.unwrap();ledger.shutdown().unwrap();
             if phase.starts_with("migration"){
-                let db=Connection::open(temp.path().join("state/ledger.sqlite")).unwrap();db.execute_batch("DROP TABLE model_pools; DROP TABLE messages; DROP TABLE forwarding_consents; DROP TABLE inference_assignments; DROP TABLE coordination; DROP TABLE run_lifecycle; DROP TABLE run_specs; DROP TABLE recovery_resolutions; UPDATE meta SET schema_version=3").unwrap();drop(db);
+                let db=Connection::open(temp.path().join("state/ledger.sqlite")).unwrap();db.execute_batch("DROP TABLE mode_history; DROP TABLE model_pools; DROP TABLE messages; DROP TABLE forwarding_consents; DROP TABLE inference_assignments; DROP TABLE coordination; DROP TABLE run_lifecycle; DROP TABLE run_specs; DROP TABLE recovery_resolutions; UPDATE meta SET schema_version=3").unwrap();drop(db);
             }
             let output=std::process::Command::new(std::env::current_exe().unwrap()).args(["--exact","ledger::crash_boundaries::child","--test-threads=1"]).env("RIVET_QUALIFICATION_ROOT",temp.path()).env("RIVET_QUALIFICATION_EXIT",phase).output().unwrap();assert_eq!(output.status.code(),Some(91),"{phase}: {}",String::from_utf8_lossy(&output.stderr));
             let report=repair_inspect(&project,Path::new("state")).unwrap();if report.sqlite_recovery_required||report.control_recovery_required{recover_state(&project,Path::new("state"),&report.snapshot_digest).await.unwrap();}
             let report=repair_inspect(&project,Path::new("state")).unwrap();assert_eq!(report.integrity,"ok");assert!(report.pending.is_empty());
             if phase.starts_with("blob"){assert_eq!(report.orphan_blobs.len(),1);}
-            let ledger=Ledger::open(&project,Path::new("state")).unwrap();ledger.shutdown().unwrap();assert!(inspect(&project,Path::new("state")).unwrap().sessions.iter().any(|s|s.id==session.0.to_string()));
+            let ledger=Ledger::open(&project,Path::new("state")).unwrap();ledger.shutdown().unwrap();
+            let deadline=std::time::Instant::now()+Duration::from_millis(500);let inspected=loop{match inspect(&project,Path::new("state")){Err(Error::Busy) if std::time::Instant::now()<deadline=>tokio::time::sleep(Duration::from_millis(1)).await,other=>break other.unwrap()}};
+            assert!(inspected.sessions.iter().any(|s|s.id==session.0.to_string()));
         }}
     }
 }

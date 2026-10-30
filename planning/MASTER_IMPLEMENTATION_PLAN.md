@@ -1,5 +1,7 @@
 # Rivet master implementation plan
 
+Current implementation evidence: [planning index](README.md) and [P2–P3 completion](research/p3c-mesh-adaptive.md). P0 planning-status text below is historical; the bounded P2a–P3c profiles are now implemented and tested. P4 and later are unstarted and require new authorization.
+
 **P0.6 final recommended blueprint — 30 October 2026. No implementation authorized or present.** This document settles the technical recommendations from P0.5; approving a design does not authorize its implementation or external effects. The [brief](RIVET_PROJECT_BRIEF.md) and user instructions remain authoritative product requirements. [Decision dispositions](open-decisions.md) distinguish recommendations, owner choices and evidence gates. [P1 handoff](P1_IMPLEMENTATION_HANDOFF.md) contains the next bounded implementation request, which has not been executed.
 
 Owner amendment (30 October 2026): [bounded P2–P3 qualification](P2_P3_QUALIFICATION.md) replaces the mandatory 72-hour P2b soak/dependency gate. Optional multi-day endurance moves to P7; all security and prerequisite gates remain. This supersedes historical soak-duration requirements.

@@ -1,5 +1,7 @@
 # Proposed implementation and qualification roadmap
 
+Current implementation evidence: [planning index](README.md) and [P2–P3 completion](research/p3c-mesh-adaptive.md). P0 planning-status text below is historical; the bounded P2a–P3c profiles are now implemented and tested. P4 and later are unstarted and require new authorization.
+
 **Status: P0.6 final planning; no implementation.** The [master plan](MASTER_IMPLEMENTATION_PLAN.md#dependency-ordered-work-packages) provides exact task IDs/modules/contracts; the [P1 handoff](P1_IMPLEMENTATION_HANDOFF.md) is the next bounded request. The stage rationale below is retained from P0.5; explicit P0.6 defaults and task ordering govern choices that it previously left open. All stages below are future proposals requiring separate explicit approval of scope and side effects. No source, scaffold, build, application test, installation, model download or benchmark was produced during this research. P1–P7 retain the [brief's](RIVET_PROJECT_BRIEF.md) sequence; lettered subdivisions make approval scopes smaller, not new release promises.
 
 Every stage must end with evidence-backed results, failed/unrun checks, a durable local checkpoint and a stop. An acceptance criterion is a future requirement, not a checked result. Any network acquisition, live provider use, paid call, desktop/device access, benchmark, push or publication must be within that stage's explicit authorization. Approval of architecture or this roadmap is not implementation approval.

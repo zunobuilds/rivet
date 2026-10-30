@@ -17,6 +17,7 @@ pub struct Consent {pub reference:String,pub recipient:ActorId,pub scope:String,
 pub struct Completion {pub claim:Claim,pub success:bool,pub review:Option<ReviewResult>}
 #[derive(Clone,Debug)]
 pub enum Command {
+    Escalate{run:RunId,claim:Claim,operation:OperationId},ResumeConflicts{run:RunId},
     NextSequence{run:RunId,sender:ActorId,recipient:ActorId,result:Arc<Mutex<Option<u64>>>},
     Inbox{run:RunId,recipient:ActorId,result:Arc<Mutex<Vec<Delivery>>>},
     Withhold{run:RunId,id:MessageId,recipient:ActorId},

@@ -24,7 +24,7 @@ pub enum PhaseGoal {WaitingOrSucceeded,Succeeded}
 pub struct Phase {pub tasks:Vec<usize>,pub profile:String,pub goal:PhaseGoal}
 #[derive(Clone,Debug,Serialize,Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Policy {pub schema_version:u32,pub behavior:Behavior,pub limits:Limits,pub profiles:Vec<Profile>,pub assignments:Vec<String>,#[serde(default)]pub phases:Vec<Phase>}
+pub struct Policy {#[serde(default)]pub adaptive:Option<crate::adaptive::Policy>,pub schema_version:u32,pub behavior:Behavior,pub limits:Limits,pub profiles:Vec<Profile>,pub assignments:Vec<String>,#[serde(default)]pub phases:Vec<Phase>}
 #[derive(Clone,Debug,Serialize,Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Reservation {pub request:RequestId,pub actor:ActorId,pub profile:String,pub context_tokens:u64,pub unknown:bool}
@@ -33,7 +33,7 @@ pub struct Reservation {pub request:RequestId,pub actor:ActorId,pub profile:Stri
 pub struct Activation {pub phase:usize,pub from:Vec<String>,pub target:String,pub profile_digest:String,pub epoch:u64}
 #[derive(Clone,Debug,Serialize,Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct State {pub policy_reference:String,pub policy:Policy,pub epoch:u64,pub revision:u64,pub phase:usize,pub phase_approved:bool,pub reservations:Vec<Reservation>,pub activation:Option<Activation>,pub handoffs:Vec<Vec<String>>}
+pub struct State {#[serde(default)]pub adaptations:u32,pub policy_reference:String,pub policy:Policy,pub epoch:u64,pub revision:u64,pub phase:usize,pub phase_approved:bool,pub reservations:Vec<Reservation>,pub activation:Option<Activation>,pub handoffs:Vec<Vec<String>>}
 pub fn digest<T:Serialize>(value:&T)->Result<String>{Ok(sha256(&serde_json::to_vec(value).map_err(|_|Error::Invalid)?))}
 fn hash(s:&str)->bool{s.len()==64&&s.bytes().all(|b|b.is_ascii_hexdigit())}
 fn add(a:u64,b:u64)->Result<u64>{a.checked_add(b).ok_or(Error::Invalid)}
@@ -41,6 +41,7 @@ fn mul(a:u64,b:u64)->Result<u64>{a.checked_mul(b).ok_or(Error::Invalid)}
 impl Policy {
     pub fn profile(&self,id:&str)->Result<&Profile>{self.profiles.iter().find(|p|p.id==id).ok_or(Error::Invalid)}
     pub fn validate(&self,actors:usize,tasks:usize)->Result<()>{
+        if let Some(adaptive)=&self.adaptive{adaptive.validate(actors)?;}
         if self.schema_version!=1||self.profiles.is_empty()||self.profiles.len()>32||self.assignments.len()!=actors||actors==0||actors>32||self.limits.os_ram<256*1024*1024||self.limits.tools_ram<1024*1024*1024||self.limits.ram==0||self.limits.ram>1<<40||self.limits.vram>1<<40||self.phases.len()>64{return Err(Error::Invalid);}
         let mut ids=std::collections::HashSet::new();for profile in &self.profiles{
             let endpoint=crate::providers::validate_endpoint(&profile.provider)?;let context=profile.provider.context_tokens.ok_or(Error::Unsupported)?;
@@ -56,7 +57,7 @@ impl Policy {
     }
 }
 impl State {
-    pub fn new(policy:Policy,epoch:u64,actors:usize,tasks:usize)->Result<Self>{policy.validate(actors,tasks)?;let policy_reference=digest(&policy)?;let state=Self{policy_reference,policy,epoch,revision:0,phase:0,phase_approved:false,reservations:vec![],activation:None,handoffs:vec![]};let(ram,vram)=state.usage()?;if ram>state.policy.limits.ram||vram>state.policy.limits.vram{return Err(Error::Denied);}Ok(state)}
+    pub fn new(policy:Policy,epoch:u64,actors:usize,tasks:usize)->Result<Self>{policy.validate(actors,tasks)?;let policy_reference=digest(&policy)?;let state=Self{adaptations:0,policy_reference,policy,epoch,revision:0,phase:0,phase_approved:false,reservations:vec![],activation:None,handoffs:vec![]};let(ram,vram)=state.usage()?;if ram>state.policy.limits.ram||vram>state.policy.limits.vram{return Err(Error::Denied);}Ok(state)}
     pub fn usage(&self)->Result<(u64,u64)>{
         let limits=&self.policy.limits;let mut ram=add(add(limits.os_ram,limits.tools_ram)?,limits.browser_ram)?;let mut vram=0;let mut instances=std::collections::HashSet::new();
         for p in self.policy.profiles.iter().filter(|p|p.resident){if instances.insert(&p.instance){ram=add(ram,p.weights_ram)?;vram=add(vram,p.weights_vram)?;}}
@@ -94,3 +95,5 @@ pub async fn observe(project:&crate::config::Project,path:&std::path::Path,run:R
     else{let activation=current.activation.as_ref().ok_or(Error::Conflict)?;if Some(digest(activation)?)!=observation.activation_digest||activation.profile_digest!=observation.profile_digest{return Err(Error::Denied);}crate::ledger::model_pool::Command::Activation{run,approved:observation.activation_digest.ok_or(Error::Invalid)?,old_unloaded:observation.old_unloaded,new_resident:observation.new_resident,evidence:observation.evidence_sha256}};
     ledger.model_command(current.revision,command).await?;let state=ledger.model_state(run).await?;ledger.shutdown()?;Ok(serde_json::json!({"model_pool":state,"changed":true,"provenance":"explicit-owner-observation","budget_refunded":false}))
 }
+
+pub async fn restrict_modes(project:&crate::config::Project,path:&std::path::Path,run:RunId,allowed:Vec<crate::domain::Mode>,approved:Option<&str>)->Result<serde_json::Value>{let state=crate::ledger::model_inspect(project,path,run)?.ok_or(Error::Unsupported)?;let policy=state.policy.adaptive.as_ref().ok_or(Error::Unsupported)?;if allowed.len()>5||allowed.iter().enumerate().any(|(i,m)|allowed[..i].contains(m))||allowed.iter().any(|m|!policy.allowed.contains(m)){return Err(Error::Denied);}let review=digest(&(review_state(&state),&allowed))?;let Some(approved)=approved else{return Ok(serde_json::json!({"allowed":allowed,"review_digest":review,"changed":false}));};if review!=approved{return Err(Error::Denied);}let ledger=crate::ledger::Ledger::open(project,path)?;let current=ledger.model_state(run).await?.ok_or(Error::Unsupported)?;if digest(&(review_state(&current),&allowed))?!=review{return Err(Error::Conflict);}ledger.model_command(current.revision,crate::ledger::model_pool::Command::Restrict{run,allowed,approved:digest(&review_state(&current))?}).await?;ledger.shutdown()?;Ok(serde_json::json!({"allowed_modes_restricted":true,"new_permissions":false}))}
