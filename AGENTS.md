@@ -13,6 +13,7 @@
 - Do not run parent-directory, system-wide, or sibling-repository searches. Keep working directory, generated files, temporary data, dependency caches, and build artifacts inside this repository; if a command cannot comply, ask first.
 - Full-access execution permissions do **not** override this rule. Operating-system reads intrinsic to running an authorized executable are not permission to inspect host files.
 - The `codex-status` shell command is **explicitly authorized solely to check the user's five-hour allowance**; do not use it as permission to inspect or change other files outside the project. If any other out-of-scope access is needed, ask for explicit approval before proceeding.
+- GitHub CLI configuration (`~/.config/gh/`) is outside the project boundary. Access is permitted ONLY after the user explicitly authorizes it for the current task. Authorization must specify the purpose and whether access is read-only or allows changes. Never assume permission from GitHub login status, previous approval, or this rule's existence. Do not expose credentials, tokens, or secrets. Any additional credential-store access requires separate approval.
 
 ## Documentation guide
 
