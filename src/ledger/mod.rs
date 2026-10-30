@@ -1,3 +1,8 @@
+mod reconciliation;
+pub use reconciliation::{ReconcileReview,ReconcileDecision,preview_reconcile,reconcile_operation,acknowledge_request};
+mod storage;
+mod restore;
+pub use restore::{RestoreReview,RestoreReport,preview_restore,restore_state};
 use crate::{config::Project, domain::*, error::{Error, Result}, sessions::Session, tools::ToolProposal};
 use cap_std::fs::{Dir, OpenOptions, OpenOptionsExt, Permissions, PermissionsExt, MetadataExt};
 use rusqlite::{params, Connection, OpenFlags, Transaction};
@@ -65,6 +70,7 @@ impl StateRoot {
 
 fn backup_before(root:&StateRoot,source:&Connection,target:u32)->Result<()> {
     let _bounded_source=image(&root.dir,DB)?;
+    ensure_space(&root.dir,restore::backup_size(source)?+_bounded_source.size+65536)?;
     let name=format!("pre-v{target}-{}.sqlite",uuid::Uuid::new_v4());
     let mut options=OpenOptions::new();options.write(true).create_new(true).mode(0o600).custom_flags(0o400000);
     let file=root.dir.open_with(&name,&options)?.into_std();
@@ -75,7 +81,7 @@ fn backup_before(root:&StateRoot,source:&Connection,target:u32)->Result<()> {
     let check:String=destination.query_row("PRAGMA quick_check",[],|r|r.get(0))?;
     if check!="ok"{return Err(Error::State);}
     check_schema(&destination)?;destination.close().map_err(|_|Error::State)?;
-    file.sync_all()?;root.dir.try_clone()?.into_std_file().sync_all()?;Ok(())
+    file.sync_all()?;root.dir.try_clone()?.into_std_file().sync_all()?;restore::bundle(root,source,&name)?;Ok(())
 }
 
 pub fn verify_engine(connection: &Connection) -> Result<String> {
@@ -91,8 +97,11 @@ fn check_schema(connection: &Connection) -> Result<()> {
         "SELECT schema_version,project_uuid,next_event_sequence,owner_epoch FROM meta", [],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
     let last: i64 = connection.query_row("SELECT coalesce(max(sequence),0) FROM events", [], |r| r.get(0))?;
-    if ![1,2,3].contains(&version) || uuid::Uuid::parse_str(&project).is_err() || epoch < 0 || last.checked_add(1) != Some(next) { return Err(Error::State); }
+    if ![1,2,3,4].contains(&version) || uuid::Uuid::parse_str(&project).is_err() || epoch < 0 || last.checked_add(1) != Some(next) { return Err(Error::State); }
     Ok(())
+}
+fn dir_admission(dir:&Dir)->Result<()> {
+    for name in ["restore.json","archived.json"]{match dir.symlink_metadata(name){Ok(_)=>return Err(Error::Recovery),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>(),Err(_)=>return Err(Error::State)}}Ok(())
 }
 fn check_admission(db:&Connection)->Result<()> {
     let version:u32=db.query_row("SELECT schema_version FROM meta",[],|r|r.get(0))?;
@@ -141,6 +150,7 @@ pub fn inspect(project: &Project, path: &Path) -> Result<Inspection> {
     let Some(root) = StateRoot::acquire(project, path, false)? else {
         return Ok(Inspection { state: "missing", sqlite_version: None, sessions: vec![] });
     };
+    dir_admission(&root.dir)?;
     if root.has_remnants()? { return Err(Error::Recovery); }
     if !root.dir.symlink_metadata(DB)?.is_file() { return Err(Error::State); }
     let connection = Connection::open_with_flags(format!("file:{}?immutable=1&mode=ro", root.db_path()), OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
@@ -206,6 +216,7 @@ impl Ledger {
         let workspace_identity = (metadata.dev(), metadata.ino());
         let root = StateRoot::acquire(project, path, true)?.ok_or(Error::State)?;
         // Orphan journals are recovery evidence even when the main DB is absent.
+        dir_admission(&root.dir)?;
         if root.has_remnants()? { return Err(Error::Recovery); }
         let existed = root.dir.symlink_metadata(DB).is_ok();
         if existed {
@@ -214,9 +225,13 @@ impl Ledger {
             settings(&check, false)?;
             check_schema(&check)?;check_admission(&check)?;verify_referenced_artifacts(&check,&root.dir)?;
             let version:u32=check.query_row("SELECT schema_version FROM meta",[],|r|r.get(0))?;
-            if version<3 {backup_before(&root,&check,3)?;}
+            let identity:String=check.query_row("SELECT project_uuid FROM meta",[],|r|r.get(0))?;
+            storage::identity(&root.dir,ProjectId(uuid::Uuid::parse_str(&identity).map_err(|_|Error::State)?))?;
+            storage::backfill_workers(&check,&root.dir)?;
+            if version<4 {backup_before(&root,&check,4)?;qualification_exit("migration-backup");}
             check.close().map_err(|_| Error::State)?;
         }
+        if !existed&&root.dir.entries()?.any(|entry|entry.map_or(true,|e|e.file_name()!=std::ffi::OsStr::new(LOCK))){return Err(Error::Recovery);}
         if !existed {
             let mut options = OpenOptions::new(); options.write(true).create_new(true).mode(0o600).custom_flags(0o400000);
             root.dir.open_with(DB, &options)?;
@@ -232,7 +247,8 @@ impl Ledger {
             transaction.execute_batch(include_str!("schema.sql"))?;
             transaction.execute_batch(include_str!("budget.sql"))?;
             transaction.execute_batch(include_str!("recovery.sql"))?;
-            transaction.execute("INSERT INTO meta VALUES(3,?1,1,0)", [ProjectId::default().0.to_string()])?;
+            transaction.execute_batch(include_str!("reconciliation.sql"))?;
+            transaction.execute("INSERT INTO meta VALUES(4,?1,1,0)", [ProjectId::default().0.to_string()])?;
             audit(&transaction, "project", "system", "initialized")?;
             transaction.commit()?;
         }
@@ -248,12 +264,16 @@ impl Ledger {
             transaction.execute("UPDATE meta SET schema_version=3",[])?;
             audit(&transaction,"project","system","migrated-v2-v3")?;
         }
+        if version<4{transaction.execute_batch(include_str!("reconciliation.sql"))?;transaction.execute("UPDATE meta SET schema_version=4",[])?;audit(&transaction,"project","system","migrated-v3-v4")?;}
         transaction.execute("UPDATE meta SET owner_epoch=owner_epoch+1", [])?;
         let epoch: u64 = transaction.query_row("SELECT owner_epoch FROM meta", [], |r| r.get::<_, i64>(0))?.try_into().map_err(|_| Error::State)?;
         audit(&transaction, "project", "system", "owner-acquired")?;
+        qualification_exit("migration-before-commit");
         transaction.commit()?;
+        qualification_exit("migration-after-commit");
         let project_uuid: String = connection.query_row("SELECT project_uuid FROM meta", [], |r|r.get(0))?;
         let project_id = ProjectId(uuid::Uuid::parse_str(&project_uuid).map_err(|_| Error::State)?);
+        storage::identity(&root.dir,project_id)?;storage::backfill_workers(&connection,&root.dir)?;
         let state_identity=root.dir.dir_metadata()?;
         let relative=project.path().strip_prefix(Path::new(env!("CARGO_MANIFEST_DIR"))).or_else(|_|project.path().strip_prefix(Path::new(env!("RIVET_SOURCE_ROOT")))).map_err(|_|Error::Invalid)?.join(project.relative(path)?);
         let owner_scope=Some(OwnerScope{state:relative,device:state_identity.dev(),inode:state_identity.ino(),project:project_id,epoch});
@@ -266,7 +286,7 @@ impl Ledger {
             while !control.is_cancelled() {
                 match rx.try_recv() {
                     Ok(pending) => {
-                        let result = apply(&mut connection, pending.command, epoch);
+                        let result = apply(&mut connection, pending.command, epoch,&_root.dir);
                         let failed = matches!(result, Err(Error::State));
                         let _ = pending.reply.send(result);
                         if failed { control.cancel(); }
@@ -325,8 +345,9 @@ fn advance(tx: &Transaction<'_>, operation: OperationId, revision: u64, from: &s
     if changed != 1 { return Err(Error::Conflict); }
     audit(tx, &operation.0.to_string(), "supervisor", to)
 }
-fn apply(connection: &mut Connection, command: LedgerCommand, epoch: u64) -> Result<()> {
+fn apply(connection: &mut Connection, command: LedgerCommand, epoch: u64,state:&Dir) -> Result<()> {
     if command.schema_version != 1 || command.owner_epoch != epoch { return Err(Error::Conflict); }
+    ensure_space(state,64*1024)?;
     let tx = connection.transaction()?;
     let actual: i64 = tx.query_row("SELECT owner_epoch FROM meta", [], |r| r.get(0))?;
     if actual != sql_integer(epoch)? { return Err(Error::Conflict); }
@@ -348,7 +369,7 @@ fn apply(connection: &mut Connection, command: LedgerCommand, epoch: u64) -> Res
         Transition::Propose { run, proposal: p } => {
             if revision != 0 || p.schema_version != 1 { return Err(Error::Conflict); }
             // Bind actor/task/run membership, beyond independent foreign keys.
-            let valid: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM tasks JOIN agents ON tasks.owner_agent_id=agents.id WHERE tasks.id=?1 AND tasks.run_id=?2 AND agents.id=?3 AND agents.run_id=?2)", params![p.task.0.to_string(),run.0.to_string(),p.actor.0.to_string()], |r| r.get(0))?;
+            let valid: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM tasks JOIN agents ON tasks.owner_agent_id=agents.id JOIN runs ON tasks.run_id=runs.id WHERE tasks.id=?1 AND tasks.run_id=?2 AND agents.id=?3 AND agents.run_id=?2 AND runs.state='active' AND runs.owner_epoch=?4)", params![p.task.0.to_string(),run.0.to_string(),p.actor.0.to_string(),sql_integer(epoch)?], |r| r.get(0))?;
             if !valid { return Err(Error::Conflict); }
             tx.execute("INSERT INTO operations VALUES(?1,?2,?3,?4,?5,?6,'proposed',0)", params![p.operation.0.to_string(),run.0.to_string(),p.task.0.to_string(),p.actor.0.to_string(),p.descriptor_digest,p.digest()?])?;
             audit(&tx, &p.operation.0.to_string(), "provider", "proposed")?;
@@ -377,6 +398,7 @@ fn apply(connection: &mut Connection, command: LedgerCommand, epoch: u64) -> Res
             if revision!=0{return Err(Error::Invalid);}crate::recovery::validate_worker(operation,&unit,&description)?;
             let dispatched:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM operations WHERE id=?1 AND state='dispatched')",[operation.0.to_string()],|r|r.get(0))?;
             if !dispatched{return Err(Error::Conflict);}
+            storage::worker(state,&storage::Worker{operation,unit:unit.clone(),description:description.clone(),epoch})?;
             tx.execute("INSERT INTO owned_workers VALUES(?1,?2,?3,?4)",params![operation.0.to_string(),unit,description,sql_integer(epoch)?])?;
             audit(&tx,&operation.0.to_string(),"supervisor","worker-bound")?;
         },
@@ -400,7 +422,7 @@ fn apply(connection: &mut Connection, command: LedgerCommand, epoch: u64) -> Res
         },
         Transition::ReserveInference {run,request,tokens,cost,digest,permission_epoch}=>{
             if revision!=0||tokens==0||digest.len()!=64||!digest.bytes().all(|b|b.is_ascii_hexdigit())||permission_epoch==0{return Err(Error::Invalid);}
-            let changed=tx.execute("UPDATE run_budgets SET token_reserved=token_reserved+?1,cost_reserved=cost_reserved+?2,requests=requests+1 WHERE run_id=?3 AND requests<request_limit AND ?1<=token_limit-token_charged-token_reserved AND ?2<=cost_limit-cost_charged-cost_reserved",params![sql_integer(tokens)?,sql_integer(cost)?,run.0.to_string()])?;
+            let changed=tx.execute("UPDATE run_budgets SET token_reserved=token_reserved+?1,cost_reserved=cost_reserved+?2,requests=requests+1 WHERE run_id=?3 AND EXISTS(SELECT 1 FROM runs WHERE id=?3 AND state='active' AND owner_epoch=?4) AND requests<request_limit AND ?1<=token_limit-token_charged-token_reserved AND ?2<=cost_limit-cost_charged-cost_reserved",params![sql_integer(tokens)?,sql_integer(cost)?,run.0.to_string(),sql_integer(epoch)?])?;
             if changed!=1{return Err(Error::Denied);}
             tx.execute("INSERT INTO inference_reservations(request_id,run_id,tokens,cost,request_digest,permission_epoch,state) VALUES(?1,?2,?3,?4,?5,?6,'reserved')",params![request.0.to_string(),run.0.to_string(),sql_integer(tokens)?,sql_integer(cost)?,digest,sql_integer(permission_epoch)?])?;
             audit(&tx,&request.0.to_string(),"supervisor","inference-reserved")?;
@@ -453,6 +475,7 @@ mod cancellation_tests {
 /// Quiescent session continuation exports only bounded evidence references, never raw transcripts.
 pub fn continuation(project:&Project,path:&Path,session:SessionId)->Result<String>{
     let root=StateRoot::acquire(project,path,false)?.ok_or(Error::Invalid)?;
+    dir_admission(&root.dir)?;
     if root.has_remnants()?{return Err(Error::Recovery);}
     let connection=Connection::open_with_flags(format!("file:{}?immutable=1&mode=ro",root.db_path()),OpenFlags::SQLITE_OPEN_READ_ONLY|OpenFlags::SQLITE_OPEN_URI|OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
     settings(&connection,false)?;check_schema(&connection)?;
@@ -460,15 +483,19 @@ pub fn continuation(project:&Project,path:&Path,session:SessionId)->Result<Strin
     if !exists{return Err(Error::Invalid);}
     let schema:u32=connection.query_row("SELECT schema_version FROM meta",[],|r|r.get(0))?;
     if schema>=2 {
-        let uncertain:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM inference_reservations i JOIN runs r ON i.run_id=r.id WHERE r.session_id=?1 AND i.state IN ('reserved','unknown'))",[session.0.to_string()],|r|r.get(0))?;
+        let query=if schema>=4{"SELECT EXISTS(SELECT 1 FROM inference_reservations i JOIN runs r ON i.run_id=r.id WHERE r.session_id=?1 AND i.state IN ('reserved','unknown') AND NOT EXISTS(SELECT 1 FROM recovery_resolutions x WHERE x.entity_id=i.request_id AND x.entity_kind='request' AND x.source_digest=i.request_digest))"}else{"SELECT EXISTS(SELECT 1 FROM inference_reservations i JOIN runs r ON i.run_id=r.id WHERE r.session_id=?1 AND i.state IN ('reserved','unknown'))"};
+        let uncertain:bool=connection.query_row(query,[session.0.to_string()],|r|r.get(0))?;
         if uncertain{return Err(Error::Recovery);}
     }
     let uncertain:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM operations o JOIN runs r ON o.run_id=r.id WHERE r.session_id=?1 AND o.state IN ('intent-recorded','dispatched','outcome-unknown','cancelled'))",[session.0.to_string()],|r|r.get(0))?;
     if uncertain{return Err(Error::Recovery);}
-    let mut statement=connection.prepare("SELECT e.sequence,e.kind,e.payload FROM events e JOIN operations o ON e.entity_id=o.id JOIN runs r ON o.run_id=r.id WHERE r.session_id=?1 AND e.kind IN ('receipt-recorded','cancelled','outcome-unknown') ORDER BY e.sequence DESC LIMIT 8")?;
-    let rows=statement.query_map([session.0.to_string()],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?)))?;
+    let mut statement=connection.prepare("SELECT e.sequence,e.kind,e.payload,e.entity_id FROM events e JOIN operations o ON e.entity_id=o.id JOIN runs r ON o.run_id=r.id WHERE r.session_id=?1 AND e.kind IN ('receipt-recorded','cancelled','outcome-unknown','reconciled-observed','abandoned-unknown') ORDER BY e.sequence DESC LIMIT 8")?;
+    let rows=statement.query_map([session.0.to_string()],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?)))?;
     let mut output=vec![];
-    for row in rows{let (sequence,kind,payload)=row?;let receipt:ExecutionReceipt=serde_json::from_str(&payload).map_err(|_|Error::State)?;output.push(serde_json::json!({"sequence":sequence,"kind":kind,"operation":receipt.operation,"outcome":receipt.outcome,"before":receipt.before_revision,"after":receipt.after_revision}));}
+    for row in rows{let (sequence,kind,payload,operation)=row?;
+        if kind=="receipt-recorded" {let receipt:ExecutionReceipt=serde_json::from_str(&payload).map_err(|_|Error::State)?;output.push(serde_json::json!({"sequence":sequence,"kind":kind,"operation":receipt.operation,"outcome":receipt.outcome,"before":receipt.before_revision,"after":receipt.after_revision}));}
+        else {output.push(serde_json::json!({"sequence":sequence,"kind":kind,"operation":operation,"provenance":"recovery-or-user-disposition","causation_proven":false}));}
+    }
     let result=serde_json::to_string(&output).map_err(|_|Error::State)?;if result.len()>8192{return Err(Error::Unsupported);}Ok(result)
 }
 
@@ -495,6 +522,7 @@ fn images(root:&StateRoot)->Result<Vec<StateImage>>{
 }
 fn snapshot_digest(images:&[StateImage])->Result<String>{serde_json::to_vec(images).map(|v|crate::tools::sha256(&v)).map_err(|_|Error::State)}
 fn immutable(root:&StateRoot)->Result<Connection>{
+    dir_admission(&root.dir)?;
     if root.has_remnants()?{return Err(Error::Recovery);}
     let db=Connection::open_with_flags(format!("file:{}?immutable=1&mode=ro",root.db_path()),OpenFlags::SQLITE_OPEN_READ_ONLY|OpenFlags::SQLITE_OPEN_URI|OpenFlags::SQLITE_OPEN_NO_MUTEX)?;settings(&db,false)?;Ok(db)
 }
@@ -502,10 +530,11 @@ fn immutable(root:&StateRoot)->Result<Connection>{
 pub fn repair_inspect(project:&Project,path:&Path)->Result<RepairReport>{
     let root=StateRoot::acquire(project,path,false)?.ok_or(Error::Invalid)?;let images=images(&root)?;let digest=snapshot_digest(&images)?;
     let mut report=RepairReport{snapshot_digest:digest,images,sqlite_recovery_required:root.has_remnants()?,control_recovery_required:false,schema_version:None,integrity:"not-inspected".into(),pending:vec![],owned_workers:vec![],artifacts:vec![],orphan_blobs:vec![]};
+    if dir_admission(&root.dir).is_err(){report.integrity="restore-or-archive".into();return Ok(report);}
     if report.sqlite_recovery_required{return Ok(report);}
     let db=immutable(&root)?;
     let schema:u32=db.query_row("SELECT schema_version FROM meta",[],|r|r.get(0))?;report.schema_version=Some(schema);
-    if ![1,2,3].contains(&schema){report.integrity="unsupported-schema".into();return Ok(report);}
+    if ![1,2,3,4].contains(&schema){report.integrity="unsupported-schema".into();return Ok(report);}
     check_schema(&db)?;
     let integrity:String=db.query_row("PRAGMA quick_check",[],|r|r.get(0))?;
     if integrity!="ok"{report.integrity="corrupt".into();return Ok(report);}
@@ -546,12 +575,13 @@ fn verify_referenced_artifacts(db:&Connection,root:&Dir)->Result<()> {
         if count>1024||total>256*1024*1024{return Err(Error::Unsupported);}store.as_ref().ok_or(Error::State)?.read(&reference)?;
     }Ok(())
 }
-/// Explicit snapshot-bound, quiescent consistent backup. No restore or overwrite.
+/// Explicit snapshot-bound, quiescent database and referenced-artifact backup; no overwrite.
 pub fn backup_state(project:&Project,path:&Path,reviewed_snapshot:&str)->Result<BackupRef>{
     let root=StateRoot::acquire(project,path,false)?.ok_or(Error::Invalid)?;
     if snapshot_digest(&images(&root)?)?!=reviewed_snapshot{return Err(Error::Denied);}
     let source=immutable(&root)?;check_schema(&source)?;check_admission(&source)?;verify_referenced_artifacts(&source,&root.dir)?;
     let integrity:String=source.query_row("PRAGMA quick_check",[],|r|r.get(0))?;if integrity!="ok"{return Err(Error::State);}
+    ensure_space(&root.dir,restore::backup_size(&source)?+image(&root.dir,DB)?.size+65536)?;
     let name=format!("backup-{}.sqlite",uuid::Uuid::new_v4());let mut options=OpenOptions::new();options.write(true).create_new(true).mode(0o600).custom_flags(0o400000);
     let file=root.dir.open_with(&name,&options)?.into_std();
     let mut destination=Connection::open_with_flags(format!("/proc/self/fd/{}/{name}",root.dir.as_raw_fd()),OpenFlags::SQLITE_OPEN_READ_WRITE|OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
@@ -560,6 +590,7 @@ pub fn backup_state(project:&Project,path:&Path,reviewed_snapshot:&str)->Result<
     check_schema(&destination)?;let check:String=destination.query_row("PRAGMA quick_check",[],|r|r.get(0))?;if check!="ok"{return Err(Error::State);}
     let version:u32=destination.query_row("SELECT schema_version FROM meta",[],|r|r.get(0))?;
     destination.close().map_err(|_|Error::State)?;file.sync_all()?;root.dir.try_clone()?.into_std_file().sync_all()?;
+    restore::bundle(&root,&source,&name)?;
     let image=image(&root.dir,&name)?;Ok(BackupRef{name,digest:image.digest,size:image.size,schema_version:version})
 }
 
@@ -567,6 +598,7 @@ pub fn backup_state(project:&Project,path:&Path,reviewed_snapshot:&str)->Result<
 pub struct RecoveryReport {pub snapshot:String,pub source_digest:String,pub stopped_workers:usize,pub state:&'static str}
 fn preserve_images(root:&StateRoot,expected:&[StateImage])->Result<String>{
     use std::io::{Read,Write};
+    ensure_space(&root.dir,expected.iter().map(|i|i.size).sum::<u64>()+65536)?;
     let name=format!("recovery-{}",uuid::Uuid::new_v4());root.dir.create_dir(&name)?;root.dir.set_permissions(&name,Permissions::from_mode(0o700))?;
     let fd=rustix::fs::openat2(&root.dir,&name,rustix::fs::OFlags::RDONLY|rustix::fs::OFlags::DIRECTORY|rustix::fs::OFlags::CLOEXEC,rustix::fs::Mode::empty(),rustix::fs::ResolveFlags::BENEATH|rustix::fs::ResolveFlags::NO_SYMLINKS|rustix::fs::ResolveFlags::NO_XDEV).map_err(|_|Error::State)?;
     let destination=Dir::from_std_file(std::fs::File::from(fd));
@@ -585,28 +617,27 @@ fn preserve_images(root:&StateRoot,expected:&[StateImage])->Result<String>{
 }
 /// Explicit evidence-preserving SQLite recovery. It pauses uncertain work and never replays it.
 pub async fn recover_state(project:&Project,path:&Path,reviewed_snapshot:&str)->Result<RecoveryReport>{
-    let root=StateRoot::acquire(project,path,false)?.ok_or(Error::Invalid)?;let expected=images(&root)?;
+    let root=StateRoot::acquire(project,path,false)?.ok_or(Error::Invalid)?;dir_admission(&root.dir)?;let expected=images(&root)?;
     if expected.iter().all(|i|i.name!=DB)||snapshot_digest(&expected)?!=reviewed_snapshot{return Err(Error::Denied);}
-    let snapshot=preserve_images(&root,&expected)?;
+    let snapshot=preserve_images(&root,&expected)?;qualification_exit("recovery-evidence");
     // Raw DB/WAL/SHM/journal evidence is durable before normal SQLite recovery can write.
     let mut db=Connection::open_with_flags(root.db_path(),OpenFlags::SQLITE_OPEN_READ_WRITE|OpenFlags::SQLITE_OPEN_NO_MUTEX)?;settings(&db,true)?;check_schema(&db)?;
     let integrity:String=db.query_row("PRAGMA quick_check",[],|r|r.get(0))?;if integrity!="ok"{return Err(Error::State);}
     if db.prepare("PRAGMA foreign_key_check")?.query([])?.next()?.is_some(){return Err(Error::State);}
     let schema:u32=db.query_row("SELECT schema_version FROM meta",[],|r|r.get(0))?;
+    let project:String=db.query_row("SELECT project_uuid FROM meta",[],|r|r.get(0))?;storage::identity(&root.dir,ProjectId(uuid::Uuid::parse_str(&project).map_err(|_|Error::State)?))?;storage::backfill_workers(&db,&root.dir)?;
     {let tx=db.transaction()?;
         tx.execute("UPDATE meta SET owner_epoch=owner_epoch+1",[])?;
         if schema>=3{tx.execute("UPDATE recovery_control SET required=1 WHERE id=1",[])?;}
         audit(&tx,"project","recovery","owner-fenced-recovery-started")?;tx.commit()?;
     }
-    let mut workers=vec![];
-    if schema>=3{
-        let mut statement=db.prepare("SELECT w.operation_id,w.unit,w.description FROM owned_workers w JOIN operations o ON w.operation_id=o.id WHERE o.state NOT IN ('terminal','denied') LIMIT 1025")?;
-        for row in statement.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?)))?{if workers.len()>=1024{return Err(Error::Unsupported);}workers.push(row?);}
+    qualification_exit("recovery-fenced");
+    // Sidecars are durable before launch and include orphan bindings whose SQL commit failed.
+    let workers=storage::workers(&root.dir)?;
+    for worker in &workers{
+        crate::tools::process::reconcile_owned(worker.operation,&worker.unit,&worker.description).await?;
     }
-    for (operation,unit,description) in &workers{
-        let id=OperationId(uuid::Uuid::parse_str(operation).map_err(|_|Error::State)?);
-        crate::tools::process::reconcile_owned(id,unit,description).await?;
-    }
+    qualification_exit("recovery-contained");
     let tx=db.transaction()?;
     let mut operations=vec![];
     {let mut statement=tx.prepare("SELECT id,state FROM operations WHERE state IN ('proposed','authorized','intent-recorded','dispatched','receipt-recorded') LIMIT 1025")?;for row in statement.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?{if operations.len()>=1024{return Err(Error::Unsupported);}operations.push(row?);}}
@@ -620,7 +651,7 @@ pub async fn recover_state(project:&Project,path:&Path,reviewed_snapshot:&str)->
     }
     tx.execute("UPDATE runs SET state='recovery-required',revision=revision+1 WHERE state='active'",[])?;
     if schema>=3{tx.execute("UPDATE recovery_control SET required=0 WHERE id=1",[])?;}
-    audit(&tx,"project","recovery","owner-fenced-recovered")?;tx.commit()?;
+    audit(&tx,"project","recovery","owner-fenced-recovered")?;tx.commit()?;qualification_exit("recovery-committed");
     let busy:i64=db.query_row("PRAGMA wal_checkpoint(TRUNCATE)",[],|r|r.get(0))?;if busy!=0{return Err(Error::Busy);}db.close().map_err(|_|Error::State)?;
     root.dir.try_clone()?.into_std_file().sync_all()?;
     Ok(RecoveryReport{snapshot,source_digest:reviewed_snapshot.into(),stopped_workers:workers.len(),state:"recovered-paused-no-replay"})
@@ -636,5 +667,55 @@ mod fencing_tests {
         let ledger=Ledger::open(&project,Path::new("state")).unwrap();let current=ledger.port().owner_scope().unwrap();assert!(matches!(verify_owner(&old),Err(Error::Denied)));verify_owner(&current).unwrap();
         let db=Connection::open(root.path().join("state/ledger.sqlite")).unwrap();db.execute("UPDATE recovery_control SET required=1 WHERE id=1",[]).unwrap();drop(db);assert!(matches!(verify_owner(&current),Err(Error::Recovery)));ledger.shutdown().unwrap();
         assert!(matches!(Ledger::open(&project,Path::new("state")),Err(Error::Recovery)));
+    }
+}
+
+pub(crate) fn ensure_space(root:&Dir,additional:u64)->Result<()>{restore::capacity(root,additional)}
+
+#[cfg(test)]
+mod full_tests {
+    use super::*;
+    #[test]
+    fn sqlite_page_ceiling_rolls_back_whole_state_and_audit_transaction(){
+        let root=tempfile::tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join(".build/tmp")).unwrap();let project=Project::open(root.path()).unwrap();Ledger::open(&project,Path::new("state")).unwrap().shutdown().unwrap();let state=StateRoot::acquire(&project,Path::new("state"),false).unwrap().unwrap();
+        let mut db=Connection::open(state.db_path()).unwrap();settings(&db,true).unwrap();let pages:i64=db.query_row("PRAGMA page_count",[],|r|r.get(0)).unwrap();db.pragma_update(None,"max_page_count",pages).unwrap();let epoch:u64=db.query_row("SELECT owner_epoch FROM meta",[],|r|Ok(r.get::<_,i64>(0)? as u64)).unwrap();
+        let mut full=false;
+        for _ in 0..1000{
+            let before:(i64,i64)=db.query_row("SELECT (SELECT count(*) FROM sessions),next_event_sequence FROM meta",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();let id=SessionId::default();
+            let result=apply(&mut db,LedgerCommand{schema_version:1,owner_epoch:epoch,expected_revision:0,transition:Transition::NewSession{id}},epoch,&state.dir);
+            if result.is_err(){assert!(matches!(result,Err(Error::State)));let after:(i64,i64)=db.query_row("SELECT (SELECT count(*) FROM sessions),next_event_sequence FROM meta",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();assert_eq!(before,after);let exists:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1)",[id.0.to_string()],|r|r.get(0)).unwrap();assert!(!exists);full=true;break;}
+        }assert!(full,"SQLite fixture must actually reach SQLITE_FULL");
+    }
+}
+
+/// Faults exist only in test binaries; production never accepts environment-controlled exits.
+pub(crate) fn qualification_exit(_point:&str){
+    #[cfg(test)] if std::env::var("RIVET_QUALIFICATION_EXIT").ok().as_deref()==Some(_point){std::process::exit(91);}
+}
+#[cfg(test)]
+mod crash_boundaries {
+    use super::*;
+    #[test]
+    fn child(){
+        let Some(path)=std::env::var_os("RIVET_QUALIFICATION_ROOT")else{return;};let project=Project::open(Path::new(&path)).unwrap();let phase=std::env::var("RIVET_QUALIFICATION_EXIT").unwrap();
+        if phase.starts_with("migration"){Ledger::open(&project,Path::new("state")).unwrap().shutdown().unwrap();}
+        else if phase.starts_with("recovery"){let r=repair_inspect(&project,Path::new("state")).unwrap();tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(recover_state(&project,Path::new("state"),&r.snapshot_digest)).unwrap();}
+        else{let root=StateRoot::acquire(&project,Path::new("state"),false).unwrap().unwrap();crate::artifacts::Store::open(&root.dir,true).unwrap().unwrap().put(b"orphan after crash","text/plain").unwrap();}
+        panic!("did not reach fault");
+    }
+    #[tokio::test]
+    async fn migration_recovery_and_blob_activation_crashes_keep_evidence_and_safe_admission(){
+        for _repeat in 0..2{for phase in ["migration-backup","migration-before-commit","migration-after-commit","recovery-evidence","recovery-fenced","recovery-contained","recovery-committed","blob-staged","blob-activated"]{
+            let temp=tempfile::tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join(".build/tmp")).unwrap();let project=Project::open(temp.path()).unwrap();
+            let ledger=Ledger::open(&project,Path::new("state")).unwrap();let session=SessionId::default();ledger.transition(0,Transition::NewSession{id:session}).await.unwrap();ledger.shutdown().unwrap();
+            if phase.starts_with("migration"){
+                let db=Connection::open(temp.path().join("state/ledger.sqlite")).unwrap();db.execute_batch("DROP TABLE recovery_resolutions; UPDATE meta SET schema_version=3").unwrap();drop(db);
+            }
+            let output=std::process::Command::new(std::env::current_exe().unwrap()).args(["--exact","ledger::crash_boundaries::child","--test-threads=1"]).env("RIVET_QUALIFICATION_ROOT",temp.path()).env("RIVET_QUALIFICATION_EXIT",phase).output().unwrap();assert_eq!(output.status.code(),Some(91),"{phase}: {}",String::from_utf8_lossy(&output.stderr));
+            let report=repair_inspect(&project,Path::new("state")).unwrap();if report.sqlite_recovery_required||report.control_recovery_required{recover_state(&project,Path::new("state"),&report.snapshot_digest).await.unwrap();}
+            let report=repair_inspect(&project,Path::new("state")).unwrap();assert_eq!(report.integrity,"ok");assert!(report.pending.is_empty());
+            if phase.starts_with("blob"){assert_eq!(report.orphan_blobs.len(),1);}
+            let ledger=Ledger::open(&project,Path::new("state")).unwrap();ledger.shutdown().unwrap();assert!(inspect(&project,Path::new("state")).unwrap().sessions.iter().any(|s|s.id==session.0.to_string()));
+        }}
     }
 }

@@ -1,4 +1,4 @@
-use crate::{config::Project, domain::SessionId, error::Result, ledger::{self, Ledger, Transition}};
+use crate::{config::Project, domain::{SessionId,OperationId,RequestId}, error::Result, ledger::{self, Ledger, Transition}};
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 use serde_json::json;
@@ -21,7 +21,14 @@ pub enum Command {
     Session { #[command(subcommand)] command: SessionCommand },
 }
 #[derive(Subcommand)]
-pub enum RepairCommand {Recover{#[arg(long)]state_dir:Option<PathBuf>,#[arg(long)]approve:String},Inspect{#[arg(long)]state_dir:Option<PathBuf>},Backup{#[arg(long)]state_dir:Option<PathBuf>,#[arg(long)]approve:String}}
+pub enum RepairCommand {
+    /// Review an uncertain operation; committing requires its exact observation digest.
+    Reconcile{#[arg(long)]state_dir:Option<PathBuf>,#[arg(long)]operation:uuid::Uuid,#[arg(long)]decision:Option<ReconcileAction>,#[arg(long)]approve:Option<String>},
+    /// Acknowledge an unknown inference request without refunding or resending it.
+    Acknowledge{#[arg(long)]state_dir:Option<PathBuf>,#[arg(long)]request:uuid::Uuid,#[arg(long)]approve:String},
+    Restore{#[arg(long)]state_dir:Option<PathBuf>,#[arg(long)]backup:String,#[arg(long)]approve:Option<String>},Recover{#[arg(long)]state_dir:Option<PathBuf>,#[arg(long)]approve:String},Inspect{#[arg(long)]state_dir:Option<PathBuf>},Backup{#[arg(long)]state_dir:Option<PathBuf>,#[arg(long)]approve:String}}
+#[derive(Clone,clap::ValueEnum)]
+pub enum ReconcileAction {AcceptObservedPost,AbandonUnknown}
 #[derive(Subcommand)]
 pub enum ProjectCommand { New {name:String, #[arg(long)] approve:Option<String>} }
 #[derive(Subcommand)]
@@ -41,6 +48,19 @@ fn output(value: serde_json::Value, structured: bool) {
 }
 pub async fn execute(cli: Cli, project: &Project) -> Result<()> {
     match cli.command {
+        Command::Repair{command:RepairCommand::Reconcile{state_dir,operation,decision,approve}}=>{
+            let id=OperationId(operation);
+            match (decision,approve){
+                (Some(decision),Some(digest))=>{let decision=match decision{ReconcileAction::AcceptObservedPost=>ledger::ReconcileDecision::AcceptObservedPost,ReconcileAction::AbandonUnknown=>ledger::ReconcileDecision::AbandonUnknown};ledger::reconcile_operation(project,state(&state_dir),id,decision,&digest).await?;output(json!({"operation":id,"reconciled":true,"replayed":false}),true);},
+                (None,None)=>{let review=ledger::preview_reconcile(project,state(&state_dir),id)?;output(json!({"review_digest":review.digest()?,"review":review}),true);},
+                _=>return Err(crate::error::Error::Invalid)
+            }
+        },
+        Command::Repair{command:RepairCommand::Acknowledge{state_dir,request,approve}}=>{ledger::acknowledge_request(project,state(&state_dir),RequestId(request),&approve)?;output(json!({"request":request,"acknowledged":true,"refunded":false,"resent":false}),true);},
+        Command::Repair{command:RepairCommand::Restore{state_dir,backup,approve}}=>{
+            if let Some(approved)=approve{output(serde_json::to_value(ledger::restore_state(project,state(&state_dir),&backup,&approved).await?).map_err(|_|crate::error::Error::State)?,true);}
+            else{let review=ledger::preview_restore(project,state(&state_dir),&backup)?;output(json!({"review_digest":review.digest()?,"review":review}),true);}
+        },
         Command::Repair{command:RepairCommand::Recover{state_dir,approve}}=>output(serde_json::to_value(ledger::recover_state(project,state(&state_dir),&approve).await?).map_err(|_|crate::error::Error::State)?,true),
         Command::Repair{command:RepairCommand::Inspect{state_dir}}=>output(serde_json::to_value(ledger::repair_inspect(project,state(&state_dir))?).map_err(|_|crate::error::Error::State)?,true),
         Command::Repair{command:RepairCommand::Backup{state_dir,approve}}=>output(serde_json::to_value(ledger::backup_state(project,state(&state_dir),&approve)?).map_err(|_|crate::error::Error::State)?,true),

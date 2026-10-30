@@ -26,7 +26,7 @@ fn crash_helper(){
 }
 #[tokio::test]
 async fn actual_child_crashes_preserve_wal_and_intents_without_replaying_effects(){
-    for phase in ["authorized","intent","dispatched","effect","artifact","receipt"]{
+    for (_repeat,phase) in (0..2).flat_map(|repeat|["authorized","intent","dispatched","effect","artifact","receipt"].map(|phase|(repeat,phase))){
         let temp=root();let output=std::process::Command::new(std::env::current_exe().unwrap()).args(["--exact","crash_helper","--test-threads=1"]).env("RIVET_RECOVERY_FIXTURE",temp.path()).env("RIVET_CRASH_PHASE",phase).output().unwrap();assert_eq!(output.status.code(),Some(91),"{}",String::from_utf8_lossy(&output.stderr));
         let project=Project::open(temp.path()).unwrap();assert!(matches!(Ledger::open(&project,Path::new("state")),Err(rivet::error::Error::Recovery)));
         let before=ledger::repair_inspect(&project,Path::new("state")).unwrap();assert!(before.sqlite_recovery_required);assert_eq!(before.integrity,"not-inspected");assert!(before.images.iter().any(|i|i.name=="ledger.sqlite-wal"));
@@ -57,4 +57,21 @@ async fn failed_reconciliation_keeps_the_owner_fence_and_admission_closed(){
     assert!(matches!(Ledger::open(&project,Path::new("state")),Err(rivet::error::Error::Recovery)));
     let report=ledger::repair_inspect(&project,Path::new("state")).unwrap();assert!(report.control_recovery_required);
     ledger::recover_state(&project,Path::new("state"),&report.snapshot_digest).await.unwrap();let report=ledger::repair_inspect(&project,Path::new("state")).unwrap();assert!(!report.control_recovery_required);assert_eq!(report.pending[0].state,"outcome-unknown");assert_eq!(fs::read_to_string(temp.path().join("code.txt")).unwrap(),"durable patch\n");
+}
+
+#[tokio::test]
+async fn human_edit_invalidates_review_and_reconciliation_never_replays(){
+    for accept in [false,true]{
+        let temp=root();let output=std::process::Command::new(std::env::current_exe().unwrap()).args(["--exact","crash_helper","--test-threads=1"]).env("RIVET_RECOVERY_FIXTURE",temp.path()).env("RIVET_CRASH_PHASE","effect").output().unwrap();assert_eq!(output.status.code(),Some(91));
+        let project=Project::open(temp.path()).unwrap();let report=ledger::repair_inspect(&project,Path::new("state")).unwrap();ledger::recover_state(&project,Path::new("state"),&report.snapshot_digest).await.unwrap();
+        let report=ledger::repair_inspect(&project,Path::new("state")).unwrap();let id=OperationId(uuid::Uuid::parse_str(&report.pending[0].operation).unwrap());
+        let db=rusqlite::Connection::open(temp.path().join("state/ledger.sqlite")).unwrap();let session=SessionId(uuid::Uuid::parse_str(&db.query_row("SELECT id FROM sessions",[],|r|r.get::<_,String>(0)).unwrap()).unwrap());drop(db);
+        assert!(ledger::continuation(&project,Path::new("state"),session).is_err());let review=ledger::preview_reconcile(&project,Path::new("state"),id).unwrap();assert!(review.post_matches);
+        fs::write(temp.path().join("code.txt"),"human edit").unwrap();assert!(ledger::reconcile_operation(&project,Path::new("state"),id,ledger::ReconcileDecision::AcceptObservedPost,&review.digest().unwrap()).await.is_err());
+        let edited=ledger::preview_reconcile(&project,Path::new("state"),id).unwrap();assert!(!edited.post_matches);assert!(ledger::reconcile_operation(&project,Path::new("state"),id,ledger::ReconcileDecision::AcceptObservedPost,&edited.digest().unwrap()).await.is_err());
+        if accept{fs::write(temp.path().join("code.txt"),"durable patch\n").unwrap();}
+        let review=ledger::preview_reconcile(&project,Path::new("state"),id).unwrap();ledger::reconcile_operation(&project,Path::new("state"),id,if accept{ledger::ReconcileDecision::AcceptObservedPost}else{ledger::ReconcileDecision::AbandonUnknown},&review.digest().unwrap()).await.unwrap();
+        let context=ledger::continuation(&project,Path::new("state"),session).unwrap();assert!(context.contains("causation_proven"));assert!(!context.contains("human edit"));assert!(ledger::preview_reconcile(&project,Path::new("state"),id).is_err());
+        assert_eq!(fs::read_to_string(temp.path().join("code.txt")).unwrap(),if accept{"durable patch\n"}else{"human edit"});
+    }
 }

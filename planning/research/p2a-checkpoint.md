@@ -1,5 +1,7 @@
 # P2a partial recovery checkpoint — 30 October 2026
 
+Continuation: [P2a acceptance](p2a-acceptance.md) supersedes the partial status and remaining P2a work below. Historical evidence remains unchanged.
+
 Current owner amendment: the historical mandatory 72-hour P2b soak/dependency gate recorded below is superseded by [bounded P2–P3 qualification](../P2_P3_QUALIFICATION.md). Optional multi-day endurance is deferred to P7; historical test results remain unchanged.
 
 **P2a is partial, not accepted. P2b and P3a–P3c remain unstarted.** P1b–P1d were committed as `d52811b`, `cf01152` and `6eb687b`; original `090f47c` / `25fce90` are preserved. This checkpoint records verified work and the exact remaining gates. The owner's sequential-stage authorization does not remove prerequisites or the real 72-hour P2b test.

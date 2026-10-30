@@ -78,7 +78,7 @@ impl FileWorkspace {
             let name = component.to_str().ok_or(Error::Invalid)?;
             if name.chars().any(char::is_control) { return Err(Error::Invalid); }
             if [".git", ".rivet-state", ".build", ".cargo", ".rivet.toml", "secrets", "credentials", ".ssh", ".gnupg", ".aws", ".netrc", ".git-credentials", ".npmrc", ".pypirc"].contains(&name)
-                || name.starts_with(".env") || name.starts_with(".rivet-edit-") { return Err(Error::Denied); }
+                || name.starts_with(".env") || name.starts_with(".rivet-") { return Err(Error::Denied); }
         }
         Ok(path)
     }
@@ -207,6 +207,10 @@ impl FileWorkspace {
             }
         }
         Ok(())
+    }
+    pub(crate) fn observe_revision(&self,path:&Path)->Result<Option<Revision>>{
+        let (dir,name)=self.parent(path)?;
+        match dir.symlink_metadata(&name){Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Ok(None),Err(_)=>Err(Error::State),Ok(_)=>self.snapshot_at(&dir,&name).map(|(_,revision,_)|Some(revision))}
     }
     /// Authorized pre-effect observation for a durable conditional-mutation description.
     pub(crate) fn prepare_intent(&self,action:&FileAction)->Result<crate::recovery::Intent>{

@@ -31,7 +31,7 @@ impl ProcessRequest {
             if path.as_os_str().is_empty() || path.components().any(|c| !matches!(c,Component::Normal(_))) {return Err(Error::Invalid);}
             for component in path.components() {
                 let name=component.as_os_str().to_str().ok_or(Error::Invalid)?;
-                if name.chars().any(char::is_control) || [".git",".rivet-state",".cargo",".rivet.toml","secrets","credentials",".ssh",".gnupg",".aws",".netrc",".git-credentials",".npmrc",".pypirc"].contains(&name) || name.starts_with(".env") {return Err(Error::Denied);}
+                if name.chars().any(char::is_control) || [".git",".rivet-state",".cargo",".rivet.toml","secrets","credentials",".ssh",".gnupg",".aws",".netrc",".git-credentials",".npmrc",".pypirc"].contains(&name) || name.starts_with(".env") || name.starts_with(".rivet-") {return Err(Error::Denied);}
             }
             size+=text.len(); if size>1024*1024 {return Err(Error::Unsupported);}
         }
@@ -133,15 +133,17 @@ impl Stage {
 impl Drop for Stage{fn drop(&mut self){let _=self.parent.remove_dir_all(&self.name);}}
 /// Invoked by the supervisor only after a committed intent. Projection files are explicit inputs.
 pub(crate) async fn perform(request:ProcessRequest, operation:crate::domain::OperationId, cancel:CancellationToken,ledger:crate::ledger::LedgerPort,revoked:CancellationToken)->Result<ProcessResult> {
-    perform_inner(request,operation,cancel,None,false,ledger,revoked).await
+    perform_inner(request,operation,cancel,None,false,ledger,revoked,LaunchTiming::default()).await
 }
 #[derive(Clone,Serialize,Deserialize)]
 pub(crate) struct GitMount{pub relative:PathBuf,pub device:u64,pub inode:u64,pub writable:bool}
 pub(crate) async fn perform_git(request:ProcessRequest,operation:crate::domain::OperationId,cancel:CancellationToken,git:GitMount,ledger:crate::ledger::LedgerPort,revoked:CancellationToken)->Result<ProcessResult>{
-    perform_inner(request,operation,cancel,Some(git),false,ledger,revoked).await
+    perform_inner(request,operation,cancel,Some(git),false,ledger,revoked,LaunchTiming::default()).await
 }
-pub(crate) async fn perform_mcp(request:ProcessRequest,operation:crate::domain::OperationId,cancel:CancellationToken,ledger:crate::ledger::LedgerPort,revoked:CancellationToken)->Result<ProcessResult>{perform_inner(request,operation,cancel,None,true,ledger,revoked).await}
-async fn perform_inner(request:ProcessRequest,operation:crate::domain::OperationId,cancel:CancellationToken,git:Option<GitMount>,mcp:bool,ledger:crate::ledger::LedgerPort,revoked:CancellationToken)->Result<ProcessResult>{
+pub(crate) async fn perform_mcp(request:ProcessRequest,operation:crate::domain::OperationId,cancel:CancellationToken,ledger:crate::ledger::LedgerPort,revoked:CancellationToken)->Result<ProcessResult>{perform_inner(request,operation,cancel,None,true,ledger,revoked,LaunchTiming::default()).await}
+#[derive(Default)]
+struct LaunchTiming {#[cfg(test)]delay_ms:u64}
+async fn perform_inner(request:ProcessRequest,operation:crate::domain::OperationId,cancel:CancellationToken,git:Option<GitMount>,mcp:bool,ledger:crate::ledger::LedgerPort,revoked:CancellationToken,_timing:LaunchTiming)->Result<ProcessResult>{
     request.validate()?; if cancel.is_cancelled(){return Err(Error::Interrupted);}
     let projection_digest=crate::tools::sha256(&serde_json::to_vec(&request.files).map_err(|_|Error::Invalid)?);
     let root=Path::new(env!("RIVET_SOURCE_ROOT"));
@@ -177,6 +179,7 @@ async fn perform_inner(request:ProcessRequest,operation:crate::domain::Operation
         "--property=MemorySwapMax=0","--property=TasksMax=32","--property=KillMode=control-group","--property=TimeoutStopSec=5s",
         "--property=NoNewPrivileges=yes","--property=OOMPolicy=kill"]);
     command.arg(format!("--property=RuntimeMaxSec={}ms",request.timeout_ms+7000));
+    #[cfg(test)] if _timing.delay_ms>0{command.arg(format!("--property=ExecStartPre=/usr/bin/sleep {}",_timing.delay_ms as f64/1000.0));}
     let identity=stage.identity()?;
     command.args(["/usr/bin/env","-i","PATH=/usr/bin"]).arg(&executable).arg("__unit-launch").arg(env!("RIVET_BUILD_DIGEST")).arg(&name).arg(identity.0.to_string()).arg(identity.1.to_string()).arg(git.as_ref().map(|g|serde_json::to_string(g).expect("mount serialization")).unwrap_or_else(||"-".into())).arg(serde_json::to_string(&owner).map_err(|_|Error::Invalid)?).arg("--");
     command.args(["/usr/bin/bwrap","--unshare-all","--unshare-user","--disable-userns","--die-with-parent","--new-session","--cap-drop","ALL"]);
@@ -361,4 +364,21 @@ impl ProcessRequest {
 pub(crate) async fn reconcile_owned(operation:crate::domain::OperationId,name:&str,description:&str)->Result<()> {
     crate::recovery::validate_worker(operation,name,description)?;
     let unit=OwnedUnit{name:name.into(),description:description.into()};unit.stop().await
+}
+
+#[cfg(test)]
+mod launch_tests {
+    use super::*;
+    use crate::{config::Project,domain::*,ledger::{Ledger,Transition},tools::ToolProposal};
+    #[tokio::test]
+    #[ignore="requires explicitly authorized native user-systemd qualification"]
+    async fn delayed_service_cannot_execute_after_revocation(){
+        let temp=tempfile::tempdir_in(Path::new(env!("RIVET_SOURCE_ROOT")).join(".build/tmp")).unwrap();let project=Project::open(temp.path()).unwrap();let ledger=Ledger::open(&project,Path::new("state")).unwrap();let session=SessionId::default();let run=RunId::default();let task=TaskId::default();let actor=ActorId::default();let operation=OperationId::default();
+        ledger.transition(0,Transition::NewSession{id:session}).await.unwrap();ledger.transition(0,Transition::RootTask{session,run,task,actor}).await.unwrap();
+        let p=ToolProposal{schema_version:1,operation,attempt:1,task,actor,descriptor_digest:DESCRIPTOR.into(),arguments:serde_json::json!({}),resources:vec![],preconditions:vec![],budget_reservation:"none".into()};ledger.transition(0,Transition::Propose{run,proposal:p}).await.unwrap();
+        let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();ledger.transition(0,Transition::Authorize{operation,grant:"fixture".into(),expiry:now+60,scope:"fixture".into(),permission_epoch:ledger.epoch()}).await.unwrap();ledger.transition(1,Transition::Intent{operation}).await.unwrap();ledger.transition(2,Transition::Dispatched{operation}).await.unwrap();
+        let request=ProcessRequest{program:"/usr/bin/printf".into(),args:vec!["UNAUTHORIZED-BODY".into()],files:BTreeMap::new(),timeout_ms:5000};let revoked=CancellationToken::new();let signal=revoked.clone();
+        let work=perform_inner(request,operation,CancellationToken::new(),None,false,ledger.port(),revoked,LaunchTiming{delay_ms:500});
+        let control=async{tokio::time::sleep(Duration::from_millis(150)).await;signal.cancel();};let (result,())=tokio::join!(work,control);let result=result.unwrap();assert_ne!(result.exit_code,Some(0));assert!(!result.stdout.contains("UNAUTHORIZED-BODY"));ledger.shutdown().unwrap();
+    }
 }

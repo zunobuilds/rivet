@@ -103,3 +103,8 @@ P0.6 is the final general planning pass. Recommendations are implementation-read
 ## Owner amendment: bounded P2–P3 qualification
 
 30 October 2026: owner explicitly removed the mandatory 72-hour P2b soak/dependency gate and deferred optional multi-day endurance to P7. The new [qualification contract](../P2_P3_QUALIFICATION.md) predeclares bounded crash/restart/restore, fault, cancellation and seeded stress coverage without relaxing permission, fencing, role-count or resource rules. Master, roadmap, decisions, security, execution/index and historical checkpoint notices are updated. This is a plan amendment, not a claim that the new tests have run.
+
+
+## 30 October 2026 — bounded P2a restore/reconciliation
+
+See [P2a acceptance](p2a-acceptance.md): schema 4, asset bundles, restartable directory-exchange restore, retained old-worker sidecars, conservative rollback budgets, explicit no-replay dispositions and repeated crash/full-storage/native qualification. Dependencies unchanged; formatter/Clippy unavailable. P2b/P3 remain dependent work. No push.

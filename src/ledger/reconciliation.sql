@@ -1,0 +1,1 @@
+CREATE TABLE recovery_resolutions(entity_id TEXT PRIMARY KEY,entity_kind TEXT NOT NULL CHECK(entity_kind IN ('operation','request')),source_revision INTEGER NOT NULL,source_digest TEXT NOT NULL,decision TEXT NOT NULL,record TEXT NOT NULL);
