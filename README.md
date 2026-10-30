@@ -2,7 +2,7 @@
 
 Rivet is a standalone AI coding-agent platform under development. Its Rust foundation provides model-free administration, local SQLite sessions, reviewed Solo coding through a configured compatible endpoint, and bounded tool APIs. The broader platform remains planned, with useful pre-1.0 milestones leading to a mature Linux release.
 
-**Status: P1a–P1d and bounded P2 recovery/lifecycle implemented on the tested host; synthetic Solo coding qualified, no live inference tested.** Administrative commands work without a provider, model, account or network connection. The reviewed Solo loop uses explicit configuration and per-request approvals; file/process/local Git tools share one broker, supervisor and ledger. See [P1b runtime evidence](planning/research/p1b-runtime.md) and [P1c Solo evidence](planning/research/p1c-solo.md) for the bounded profiles and limitations. Native Ollama/Anthropic profiles, scoped stdio MCP and explicitly pinned skill text have synthetic qualification; see [P1d evidence](planning/research/p1d-adapters.md). Later product capabilities described below remain **planned**. Rustfmt and Clippy are unavailable in the installed toolchain. No installer, release or benchmark is provided.
+**Status: P1a–P1d and bounded P2 recovery/lifecycle and P3a hierarchies implemented on the tested host; synthetic Solo coding qualified, no live inference tested.** Administrative commands work without a provider, model, account or network connection. The reviewed Solo loop uses explicit configuration and per-request approvals; file/process/local Git tools share one broker, supervisor and ledger. See [P1b runtime evidence](planning/research/p1b-runtime.md) and [P1c Solo evidence](planning/research/p1c-solo.md) for the bounded profiles and limitations. Native Ollama/Anthropic profiles, scoped stdio MCP and explicitly pinned skill text have synthetic qualification; see [P1d evidence](planning/research/p1d-adapters.md). Later product capabilities described below remain **planned**. Rustfmt and Clippy are unavailable in the installed toolchain. No installer, release or benchmark is provided.
 
 Rivet is intended to be free and open-source software (FOSS), but no license has been selected or included. The FOSS goal is not a present license grant.
 
@@ -28,7 +28,7 @@ Rivet is intended to be free and open-source software (FOSS), but no license has
 | --- | --- |
 | Product definition | Recorded in the [project brief](planning/RIVET_PROJECT_BRIEF.md), dated 30 October 2026. |
 | Repository guidance | [AGENTS.md](AGENTS.md) defines work boundaries; the [documentation guide](GITHUB_DOCUMENTATION_GUIDE.md) defines documentation practices. |
-| Foundation | Administrative CLI, schema-v5 ledger/budgets/sessions, reviewed compatible-provider Solo loop and supervised file/process/local Git APIs. Synthetic endpoint qualification only. |
+| Foundation | Administrative CLI, schema-v6 ledger/budgets/sessions, reviewed compatible-provider Solo loop and supervised file/process/local Git APIs. Synthetic endpoint qualification only. |
 | Source build | Rust 1.99.1, installed GCC and bubblewrap; contained developer build route below. No installer. |
 | Testing | Deterministic offline unit/integration and build-containment checks; no broad platform qualification, CI or performance results. |
 | Licensing | Undecided; no license file is present. |
@@ -58,6 +58,8 @@ scripts/cargo-contained offline run --locked --offline -- session list --json
 State defaults to `.rivet-state/`; `status`, `state init` and session commands accept `--state-dir PATH` inside the project. State roots must be owner-only directories without links. Status/list refuse busy state or WAL/recovery remnants; `repair inspect` reports raw recovery evidence; explicit snapshot-bound `repair recover` preserves journals and pauses ambiguous work without replay. `repair backup` creates a verified database-and-assets bundle. `repair restore --backup NAME` previews an exact review; `--approve DIGEST` restores into a fresh fenced state while preserving the displaced state. Explicit reconciliation acknowledges observations/unknown usage without replay or refunds. See [P2a qualification](planning/research/p2a-acceptance.md) for commands, bounded crash evidence and limits. Help/version, config check, status and session list are read-only. Exit classes are 0 success, 2 invalid input/config, 3 unsupported/not-ready capability, 4 state/lock/I/O failure, and 130 interruption.
 
 Bounded lifecycle is implemented; see [P2b evidence and limits](planning/research/p2b-lifecycle.md). `run status UUID`, `run pause UUID` and `run stop UUID` use the active core's private local control channel or inspect quiescent state. `run resume UUID` previews an exact continuation; `--approve DIGEST` retains the original deadline, consumed steps and budgets and requires fresh per-request review. The initial task is stored privately for continuation; model/tool transcripts remain off. `chat --detach` explicitly uses a temporary bounded user systemd unit running the same supervisor. Review it through `run status` and approve only the printed exact challenge with `run approve UUID CHALLENGE`. Detached stdin credentials are unsupported. A control acknowledgment precedes draining and durable completion; inspect final status. No multi-day endurance or real inference is claimed.
+
+Reviewed hierarchy execution is available for Solo, Pair, Crew and Fleet. `run template --mode pair --task TEXT` emits a JSON plan; `run hierarchy --plan PATH` previews it, and `--approve DIGEST` admits the graph while retaining per-request reviews. Crew/Fleet use exact checked revision evidence and a separate technical Reviewer. `run status UUID` shows actor/task IDs; `run forward` previews consent for an exact recipient, scope and decision. See [P3a commands, qualification and limits](planning/research/p3a-hierarchies.md). Shared Model/Concurrent/Relay, Cookbook, Mesh and Adaptive remain planned.
 
 A minimal optional `.rivet.toml` contains `schema_version = 1`. The optional `[provider]` table accepts `profile`, `endpoint` and `model` strings. Status reports `configured-unverified`; configuration checks never contact an endpoint. The first working profile is `llama.cpp-compatible`. Unknown fields or schema versions fail. Do not store keys in configuration; no keyring backend is qualified. Anthropic accepts an explicit ephemeral stdin key; it has only synthetic qualification.
 
@@ -105,7 +107,7 @@ Human-facing reporting is intentionally lean: task results, diffs, status, and e
 
 ## Agent modes and execution
 
-The following cardinalities are requirements for the planned modes. Role names describe agent responsibilities; they do not require a distinct loaded model for every agent.
+The following cardinalities are enforced for the implemented Solo/Pair/Crew/Fleet profile; Mesh/Adaptive remain planned. Role names describe agent responsibilities; they do not require a distinct loaded model for every agent.
 
 | Mode | Required composition | Intended shape |
 | --- | --- | --- |

@@ -25,3 +25,11 @@ pub mod recovery;
 pub mod artifacts;
 
 pub mod lifecycle;
+
+pub mod scheduler;
+
+pub mod coordination;
+
+mod agent;
+
+pub mod hierarchy;

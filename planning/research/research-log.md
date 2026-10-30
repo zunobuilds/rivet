@@ -113,3 +113,8 @@ See [P2a acceptance](p2a-acceptance.md): schema 4, asset bundles, restartable di
 ## 30 October 2026 — P2b bounded lifecycle
 
 [P2b qualification](p2b-lifecycle.md): schema 5 durable RunSpec/checkpoints/deadlines, private control channel, explicit no-refund resume and opt-in same-supervisor detached core. Synthetic seeded dispatch/control/restart and actual crash/native detach fixtures passed; formatter/Clippy unavailable. No dependency acquisition, live inference or push. P3 remains next.
+
+
+## 30 October 2026 — P3a explicit hierarchies
+
+[P3a evidence](p3a-hierarchies.md) records schema 6, exact roles, a shared durable graph/claims/writer leases, consented messaging/atomic acknowledgment, separate contexts and artifact-bound technical review. Thousand-quantum fairness and actual synthetic Pair/Crew/Fleet checked workflows passed, including reviewer rejection and a preserved human edit. P3b/P3c remain next; no dependency changes or push.

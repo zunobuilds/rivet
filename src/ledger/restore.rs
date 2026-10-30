@@ -85,12 +85,13 @@ fn stage_database(root:&StateRoot,review:&RestoreReview,workers:&[storage::Worke
     if schema==1{tx.execute_batch(include_str!("budget.sql"))?;}if schema<3{tx.execute_batch(include_str!("recovery.sql"))?;}
     if schema<4{tx.execute_batch(include_str!("reconciliation.sql"))?;}
     if schema<5{tx.execute_batch(include_str!("lifecycle.sql"))?;}
+    if schema<6{tx.execute_batch(include_str!("coordination.sql"))?;}
     tx.execute("UPDATE run_lifecycle SET status='recovery-required',revision=revision+1",[])?;
     tx.execute("DELETE FROM recovery_resolutions",[])?;
     let epoch:i64=tx.query_row("SELECT owner_epoch FROM meta",[],|r|r.get(0))?;
     let epoch=epoch.max(workers.iter().map(|w|sql_integer(w.epoch)).collect::<Result<Vec<_>>>()?.into_iter().max().unwrap_or(0)).checked_add(1).ok_or(Error::State)?;
-    tx.execute("UPDATE meta SET schema_version=5,owner_epoch=?1",[epoch])?;
-    tx.execute("DELETE FROM grants",[])?;
+    tx.execute("UPDATE meta SET schema_version=?1,owner_epoch=?2",params![SCHEMA_VERSION,epoch])?;
+    tx.execute("DELETE FROM grants",[])?;tx.execute("DELETE FROM forwarding_consents",[])?;
     tx.execute("UPDATE operations SET state=CASE WHEN state IN ('proposed','authorized') THEN 'denied' WHEN state='receipt-recorded' THEN 'terminal' ELSE 'outcome-unknown' END,revision=revision+1 WHERE state NOT IN ('terminal','denied')",[])?;
     tx.execute("UPDATE runs SET state='recovery-required',revision=revision+1",[])?;
     tx.execute("UPDATE inference_reservations SET state='unknown' WHERE state IN ('reserved','settled')",[])?;

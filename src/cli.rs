@@ -24,6 +24,9 @@ pub enum Command {
 }
 #[derive(Subcommand)]
 pub enum RunCommand {
+    Forward{run:uuid::Uuid,#[arg(long)]recipient:uuid::Uuid,#[arg(long)]scope:String,#[arg(long)]decision:String,#[arg(long)]approve:Option<String>,#[arg(long)]state_dir:Option<PathBuf>},
+    Template{#[arg(long)]mode:ModeArg,#[arg(long)]task:String,#[arg(long)]paths:Vec<PathBuf>,#[arg(long)]minimal:bool},
+    Hierarchy{#[arg(long)]plan:PathBuf,#[arg(long)]approve:Option<String>,#[arg(long)]config:Option<PathBuf>,#[arg(long)]state_dir:Option<PathBuf>,#[arg(long,default_value_t=100)]steps:u32,#[arg(long,default_value_t=3600)]deadline_seconds:u64,#[arg(long,default_value_t=65536)]token_budget:u64,#[arg(long,default_value_t=0)]spend_ceiling_micros:u64,#[arg(long,default_value_t=0)]request_cost_micros:u64,#[arg(long)]ephemeral_key_stdin:bool,#[arg(long)]detach:bool,#[arg(long,hide=true)]detached_core:bool,#[arg(long)]minimal:bool},
     Status{run:uuid::Uuid,#[arg(long)]state_dir:Option<PathBuf>},
     Pause{run:uuid::Uuid,#[arg(long)]state_dir:Option<PathBuf>},
     Stop{run:uuid::Uuid,#[arg(long)]state_dir:Option<PathBuf>},
@@ -31,6 +34,9 @@ pub enum RunCommand {
     Approve{run:uuid::Uuid,challenge:String,#[arg(long)]state_dir:Option<PathBuf>},
     Resume{run:uuid::Uuid,#[arg(long)]state_dir:Option<PathBuf>,#[arg(long)]config:Option<PathBuf>,#[arg(long)]approve:Option<String>,#[arg(long,default_value_t=0)]request_cost_micros:u64,#[arg(long)]ephemeral_key_stdin:bool,#[arg(long)]detach:bool,#[arg(long,hide=true)]detached_core:bool},
 }
+#[derive(Clone,clap::ValueEnum)]
+pub enum ModeArg {Solo,Pair,Crew,Fleet}
+impl ModeArg{fn mode(&self)->crate::domain::Mode{match self{Self::Solo=>crate::domain::Mode::Solo,Self::Pair=>crate::domain::Mode::Pair,Self::Crew=>crate::domain::Mode::Crew,Self::Fleet=>crate::domain::Mode::Fleet}}}
 #[derive(Subcommand)]
 pub enum RepairCommand {
     /// Review an uncertain operation; committing requires its exact observation digest.
@@ -63,8 +69,21 @@ pub async fn execute_controlled(cli:Cli,project:&Project,cancel:tokio_util::sync
         Command::Run{command}=>{
             use crate::ledger::control::{self,Action};use crate::domain::RunId;
             match command{
+                RunCommand::Forward{run,recipient,scope,decision,approve,state_dir}=>{
+                    let run=RunId(run);let recipient=crate::domain::ActorId(recipient);let status=control::request(project,state(&state_dir),run,Action::Status).await?;let epoch=status["snapshot"]["spec"]["permission_epoch"].as_u64().ok_or(crate::error::Error::State)?;let digest=control::forward_digest(run,recipient,&scope,&decision,epoch)?;
+                    if let Some(approved)=approve{if approved!=digest{return Err(crate::error::Error::Denied);}output(control::request(project,state(&state_dir),run,Action::Forward{recipient,scope,text:decision,epoch,approved}).await?,true);}else{output(json!({"run":run,"recipient":recipient,"scope":scope,"decision":decision,"epoch":epoch,"review_digest":digest,"forwarded":false}),true);}
+                },
+                RunCommand::Template{mode,task,paths,minimal}=>{let plan=crate::scheduler::template(mode.mode(),&task,paths)?;crate::domain::validate_roles(&plan.mode,&plan.agents.iter().map(|a|a.role.clone()).collect::<Vec<_>>(),minimal)?;output(serde_json::to_value(plan).map_err(|_|crate::error::Error::State)?,true);},
+                RunCommand::Hierarchy{plan,approve,config,state_dir,steps,deadline_seconds,token_budget,spend_ceiling_micros,request_cost_micros,ephemeral_key_stdin,detach,detached_core,minimal}=>{
+                    if detached_core{control::verify_detached()?;}
+                    let plan:crate::scheduler::Plan=serde_json::from_slice(&project.input(&plan)?).map_err(|_|crate::error::Error::Invalid)?;plan.validate()?;crate::domain::validate_roles(&plan.mode,&plan.agents.iter().map(|a|a.role.clone()).collect::<Vec<_>>(),minimal)?;let digest=crate::hierarchy::plan_digest(&plan)?;
+                    let Some(approve)=approve else{output(json!({"plan":plan,"review_digest":digest,"executed":false}),true);return Ok(());};if approve!=digest{return Err(crate::error::Error::Denied);}
+                    if detach&&!detached_core{let arguments=std::env::args().skip(1).collect::<Vec<_>>();output(control::detach(project,state(&state_dir),&arguments).await?,true);return Ok(());}
+                    let configuration=project.config(config.as_deref())?;let provider=configuration.provider.ok_or(crate::error::Error::Unsupported)?;if ephemeral_key_stdin&&provider.profile!="anthropic"{return Err(crate::error::Error::Invalid);}let credential=if ephemeral_key_stdin{Some(crate::terminal::read_secret().await?)}else{None};let mut terminal=crate::terminal::Terminal::new();
+                    let report=crate::hierarchy::run_controlled(project,state(&state_dir),provider,crate::chat::ChatOptions{session:None,task:plan.root().description.clone(),steps,deadline_seconds,budget:crate::budget::BudgetLimits{tokens:token_budget,requests:steps,cost_micros:spend_ceiling_micros},request_cost_micros,credential,mcp:configuration.mcp,skills:configuration.skills},Some(plan),Some(approve),&mut terminal,cancel,crate::chat::Controls{resume:None,detached:detach,external_reviews:detached_core}).await?;output(serde_json::to_value(report).map_err(|_|crate::error::Error::State)?,true);
+                },
                 RunCommand::Status{run,state_dir}=>{
-                    let run=RunId(run);match crate::lifecycle::inspect(project,state(&state_dir),run){Ok(snapshot)=>output(json!({"snapshot":snapshot,"resume_digest":snapshot.digest()?}),true),Err(crate::error::Error::Busy)=>output(control::request(project,state(&state_dir),run,Action::Status).await?,true),Err(error)=>return Err(error)}
+                    let run=RunId(run);match crate::lifecycle::inspect(project,state(&state_dir),run){Ok(snapshot)=>{let graph=if snapshot.coordination_digest.is_some(){Some(crate::ledger::graph_inspect(project,state(&state_dir),run)?)}else{None};output(json!({"snapshot":snapshot,"coordination":graph,"resume_digest":snapshot.digest()?}),true)},Err(crate::error::Error::Busy)=>output(control::request(project,state(&state_dir),run,Action::Status).await?,true),Err(error)=>return Err(error)}
                 },
                 RunCommand::Stop{run,state_dir}=>{
                     let run=RunId(run);match crate::lifecycle::inspect(project,state(&state_dir),run){
@@ -81,7 +100,8 @@ pub async fn execute_controlled(cli:Cli,project:&Project,cancel:tokio_util::sync
                     if ephemeral_key_stdin&&provider.profile!="anthropic"{return Err(crate::error::Error::Invalid);}
                     let credential=if ephemeral_key_stdin{Some(crate::terminal::read_secret().await?)}else{None};
                     let mut terminal=crate::terminal::Terminal::new();
-                    let report=crate::chat::run_controlled(project,state(&state_dir),provider,crate::chat::ChatOptions{session:Some(snapshot.spec.session),task:snapshot.spec.task,steps:100,deadline_seconds:3600,budget:crate::budget::BudgetLimits{tokens:65536,requests:100,cost_micros:u64::from(request_cost_micros>0)},request_cost_micros,credential,mcp:configuration.mcp,skills:configuration.skills},&mut terminal,cancel,crate::chat::Controls{resume:Some((run,approved)),detached:detach,external_reviews:detached_core}).await?;
+                    let graph=snapshot.coordination_digest.is_some();let options=crate::chat::ChatOptions{session:Some(snapshot.spec.session),task:snapshot.spec.task,steps:100,deadline_seconds:3600,budget:crate::budget::BudgetLimits{tokens:65536,requests:100,cost_micros:u64::from(request_cost_micros>0)},request_cost_micros,credential,mcp:configuration.mcp,skills:configuration.skills};let controls=crate::chat::Controls{resume:Some((run,approved)),detached:detach,external_reviews:detached_core};
+                    let report=if graph{crate::hierarchy::run_controlled(project,state(&state_dir),provider,options,None,None,&mut terminal,cancel,controls).await?}else{crate::chat::run_controlled(project,state(&state_dir),provider,options,&mut terminal,cancel,controls).await?};
                     output(serde_json::to_value(report).map_err(|_|crate::error::Error::State)?,true);
                 },
                 other=>{let (run,state_dir,action)=match other{RunCommand::Pause{run,state_dir}=>(run,state_dir,Action::Pause),RunCommand::Disconnect{run,state_dir}=>(run,state_dir,Action::Disconnect),RunCommand::Approve{run,state_dir,challenge}=>(run,state_dir,Action::Approve{challenge}),_=>unreachable!()};output(control::request(project,state(&state_dir),RunId(run),action).await?,true);}

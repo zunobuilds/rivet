@@ -1,3 +1,4 @@
+mod coordination;
 pub(crate) mod control;
 mod reconciliation;
 pub use reconciliation::{ReconcileReview,ReconcileDecision,preview_reconcile,reconcile_operation,acknowledge_request};
@@ -12,7 +13,7 @@ use std::{os::fd::AsRawFd, path::Path, thread::{self, JoinHandle}, time::{Durati
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-pub(crate) const SCHEMA_VERSION:u32=5;
+pub(crate) const SCHEMA_VERSION:u32=6;
 const DB: &str = "ledger.sqlite";
 const LOCK: &str = "owner.lock";
 const QUEUE: usize = 128;
@@ -167,6 +168,8 @@ pub fn inspect(project: &Project, path: &Path) -> Result<Inspection> {
 pub enum Transition {
     #[cfg(test)] TestBarrier{entered:std::sync::Arc<std::sync::Barrier>,release:std::sync::Arc<std::sync::Barrier>},
     Lifecycle{command:crate::lifecycle::Command},
+    Coordination{command:crate::coordination::Command},
+    ReserveTaskInference{run:RunId,request:RequestId,tokens:u64,cost:u64,digest:String,permission_epoch:u64,claim:crate::scheduler::Claim},
     NewSession { id: SessionId },
     RootTask { session: SessionId, run: RunId, task: TaskId, actor: ActorId },
     Propose { run: RunId, proposal: ToolProposal },
@@ -253,6 +256,7 @@ impl Ledger {
             transaction.execute_batch(include_str!("recovery.sql"))?;
             transaction.execute_batch(include_str!("reconciliation.sql"))?;
             transaction.execute_batch(include_str!("lifecycle.sql"))?;
+            transaction.execute_batch(include_str!("coordination.sql"))?;
             transaction.execute("INSERT INTO meta VALUES(?1,?2,1,0)", params![SCHEMA_VERSION,ProjectId::default().0.to_string()])?;
             audit(&transaction, "project", "system", "initialized")?;
             transaction.commit()?;
@@ -271,6 +275,7 @@ impl Ledger {
         }
         if version<4{transaction.execute_batch(include_str!("reconciliation.sql"))?;transaction.execute("UPDATE meta SET schema_version=4",[])?;audit(&transaction,"project","system","migrated-v3-v4")?;}
         if version<5{transaction.execute_batch(include_str!("lifecycle.sql"))?;transaction.execute("UPDATE meta SET schema_version=5",[])?;audit(&transaction,"project","system","migrated-v4-v5")?;}
+        if version<6{transaction.execute_batch(include_str!("coordination.sql"))?;transaction.execute("UPDATE meta SET schema_version=6",[])?;audit(&transaction,"project","system","migrated-v5-v6")?;}
         transaction.execute("UPDATE run_lifecycle SET status='recovery-required',revision=revision+1 WHERE status='active'",[])?;
         transaction.execute("UPDATE runs SET state='recovery-required',revision=revision+1 WHERE id IN(SELECT run_id FROM run_lifecycle WHERE status='recovery-required')",[])?;
         transaction.execute("UPDATE meta SET owner_epoch=owner_epoch+1", [])?;
@@ -355,13 +360,14 @@ fn advance(tx: &Transaction<'_>, operation: OperationId, revision: u64, from: &s
 }
 fn apply(connection: &mut Connection, command: LedgerCommand, epoch: u64,state:&Dir) -> Result<()> {
     if command.schema_version != 1 || command.owner_epoch != epoch { return Err(Error::Conflict); }
-    if !matches!(&command.transition,Transition::Lifecycle{command:crate::lifecycle::Command::Inspect{..}}){ensure_space(state,64*1024)?;}
+    if !matches!(&command.transition,Transition::Lifecycle{command:crate::lifecycle::Command::Inspect{..}}|Transition::Coordination{command:crate::coordination::Command::Inspect{..}|crate::coordination::Command::Inbox{..}|crate::coordination::Command::NextSequence{..}}){ensure_space(state,64*1024)?;}
     let tx = connection.transaction()?;
     let actual: i64 = tx.query_row("SELECT owner_epoch FROM meta", [], |r| r.get(0))?;
     if actual != sql_integer(epoch)? { return Err(Error::Conflict); }
     let revision = command.expected_revision;
     match command.transition {
         #[cfg(test)] Transition::TestBarrier{entered,release}=>{entered.wait();release.wait();},
+        Transition::Coordination{command}=>coordination::apply(&tx,state,command,revision,epoch)?,
         Transition::Lifecycle{command}=>crate::lifecycle::apply(&tx,command,revision,epoch)?,
         Transition::NewSession { id } => {
             if revision != 0 { return Err(Error::Conflict); }
@@ -381,16 +387,19 @@ fn apply(connection: &mut Connection, command: LedgerCommand, epoch: u64,state:&
             // Bind actor/task/run membership, beyond independent foreign keys.
             let valid: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM tasks JOIN agents ON tasks.owner_agent_id=agents.id JOIN runs ON tasks.run_id=runs.id WHERE tasks.id=?1 AND tasks.run_id=?2 AND agents.id=?3 AND agents.run_id=?2 AND runs.state='active' AND runs.owner_epoch=?4 AND NOT EXISTS(SELECT 1 FROM run_lifecycle l WHERE l.run_id=runs.id AND l.status!='active'))", params![p.task.0.to_string(),run.0.to_string(),p.actor.0.to_string(),sql_integer(epoch)?], |r| r.get(0))?;
             if !valid { return Err(Error::Conflict); }
+            coordination::proposal(&tx,run,&p,epoch)?;
             tx.execute("INSERT INTO operations VALUES(?1,?2,?3,?4,?5,?6,'proposed',0)", params![p.operation.0.to_string(),run.0.to_string(),p.task.0.to_string(),p.actor.0.to_string(),p.descriptor_digest,p.digest()?])?;
             audit(&tx, &p.operation.0.to_string(), "provider", "proposed")?;
         },
         Transition::Deny { operation } => advance(&tx, operation, revision, "proposed", "denied")?,
         Transition::Authorize { operation, grant, expiry, scope, permission_epoch } => {
+            let run:String=tx.query_row("SELECT run_id FROM operations WHERE id=?1",[operation.0.to_string()],|r|r.get(0))?;let run=RunId(uuid::Uuid::parse_str(&run).map_err(|_|Error::State)?);check_run_permission(&tx,run,permission_epoch,Some(expiry))?;
             advance(&tx, operation, revision, "proposed", "authorized")?;
             tx.execute("INSERT INTO grants VALUES(?1,?2,?3,?4,?5)", params![grant,operation.0.to_string(),sql_integer(permission_epoch)?,sql_integer(expiry)?,scope])?;
         },
-        Transition::Intent { operation } => advance(&tx, operation, revision, "authorized", "intent-recorded")?,
+        Transition::Intent { operation } => {check_operation_admission(&tx,operation)?;advance(&tx, operation, revision, "authorized", "intent-recorded")?;},
         Transition::PreparedIntent{operation,intent}=>{
+            check_operation_admission(&tx,operation)?;
             advance(&tx,operation,revision,"authorized","intent-recorded")?;
             tx.execute("INSERT INTO operation_intents VALUES(?1,?2,?3)",params![operation.0.to_string(),intent.class(),intent.encode()?])?;
         },
@@ -412,7 +421,7 @@ fn apply(connection: &mut Connection, command: LedgerCommand, epoch: u64,state:&
             tx.execute("INSERT INTO owned_workers VALUES(?1,?2,?3,?4)",params![operation.0.to_string(),unit,description,sql_integer(epoch)?])?;
             audit(&tx,&operation.0.to_string(),"supervisor","worker-bound")?;
         },
-        Transition::Dispatched { operation } => advance(&tx, operation, revision, "intent-recorded", "dispatched")?,
+        Transition::Dispatched { operation } => {check_operation_admission(&tx,operation)?;advance(&tx, operation, revision, "intent-recorded", "dispatched")?;},
         Transition::Receipt { receipt } => {
             if receipt.schema_version != 1 { return Err(Error::Invalid); }
             advance(&tx, receipt.operation, revision, "dispatched", match receipt.outcome { Outcome::Unknown => "outcome-unknown", Outcome::Cancelled => "cancelled", _ => "receipt-recorded" })?;
@@ -432,12 +441,13 @@ fn apply(connection: &mut Connection, command: LedgerCommand, epoch: u64,state:&
             tx.execute("INSERT INTO run_budgets(run_id,token_limit,request_limit,cost_limit) VALUES(?1,?2,?3,?4)",params![run.0.to_string(),sql_integer(limits.tokens)?,limits.requests,sql_integer(limits.cost_micros)?])?;
             audit(&tx,&run.0.to_string(),"user","budget-initialized")?;
         },
-        Transition::ReserveInference {run,request,tokens,cost,digest,permission_epoch}=>{
-            if revision!=0||tokens==0||digest.len()!=64||!digest.bytes().all(|b|b.is_ascii_hexdigit())||permission_epoch==0{return Err(Error::Invalid);}
-            let changed=tx.execute("UPDATE run_budgets SET token_reserved=token_reserved+?1,cost_reserved=cost_reserved+?2,requests=requests+1 WHERE run_id=?3 AND EXISTS(SELECT 1 FROM runs WHERE id=?3 AND state='active' AND owner_epoch=?4 AND NOT EXISTS(SELECT 1 FROM run_lifecycle l WHERE l.run_id=runs.id AND l.status!='active')) AND requests<request_limit AND ?1<=token_limit-token_charged-token_reserved AND ?2<=cost_limit-cost_charged-cost_reserved",params![sql_integer(tokens)?,sql_integer(cost)?,run.0.to_string(),sql_integer(epoch)?])?;
-            if changed!=1{return Err(Error::Denied);}
-            tx.execute("INSERT INTO inference_reservations(request_id,run_id,tokens,cost,request_digest,permission_epoch,state) VALUES(?1,?2,?3,?4,?5,?6,'reserved')",params![request.0.to_string(),run.0.to_string(),sql_integer(tokens)?,sql_integer(cost)?,digest,sql_integer(permission_epoch)?])?;
-            audit(&tx,&request.0.to_string(),"supervisor","inference-reserved")?;
+        Transition::ReserveInference{run,request,tokens,cost,digest,permission_epoch}=>{
+            if coordination::exists(&tx,run)?{return Err(Error::Denied);}reserve(&tx,revision,epoch,run,request,tokens,cost,digest,permission_epoch)?;
+        },
+        Transition::ReserveTaskInference{run,request,tokens,cost,digest,permission_epoch,claim}=>{
+            let now=SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_|Error::State)?.as_secs();coordination::validate_claim(&tx,run,&claim,epoch,now)?;
+            reserve(&tx,revision,epoch,run,request,tokens,cost,digest,permission_epoch)?;
+            tx.execute("INSERT INTO inference_assignments VALUES(?1,?2,?3,?4)",params![request.0.to_string(),claim.task.0.to_string(),claim.actor.0.to_string(),sql_integer(claim.fence)?])?;
         },
         Transition::SettleInference {request,usage}=>{
             if revision!=0{return Err(Error::Conflict);}
@@ -460,6 +470,21 @@ fn apply(connection: &mut Connection, command: LedgerCommand, epoch: u64,state:&
         },
     }
     tx.commit()?; Ok(())
+}
+
+fn check_run_permission(tx:&Transaction<'_>,run:RunId,permission_epoch:u64,expiry:Option<u64>)->Result<()>{
+    let controlled:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM run_lifecycle WHERE run_id=?1)",[run.0.to_string()],|r|r.get(0))?;
+    if controlled{let snapshot=crate::lifecycle::snapshot(tx,run)?;let now=SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_|Error::State)?.as_secs();if snapshot.state!="active"||snapshot.spec.permission_epoch!=permission_epoch||now>=snapshot.spec.deadline||expiry.is_some_and(|expiry|expiry<=now||expiry>snapshot.spec.deadline){return Err(Error::Denied);}}Ok(())
+}
+fn check_operation_admission(tx:&Transaction<'_>,operation:OperationId)->Result<()>{let(run,epoch,expiry,scope,digest):(String,i64,i64,String,String)=tx.query_row("SELECT o.run_id,g.epoch,g.expiry,g.scope,o.proposal_digest FROM operations o JOIN grants g ON g.operation_id=o.id WHERE o.id=?1",[operation.0.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)))?;let run=RunId(uuid::Uuid::parse_str(&run).map_err(|_|Error::State)?);let controlled:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM run_lifecycle WHERE run_id=?1)",[run.0.to_string()],|r|r.get(0))?;if controlled&&scope!=digest{return Err(Error::Denied);}check_run_permission(tx,run,epoch.try_into().map_err(|_|Error::State)?,Some(expiry.try_into().map_err(|_|Error::State)?))}
+fn reserve(tx:&Transaction<'_>,revision:u64,epoch:u64,run:RunId,request:RequestId,tokens:u64,cost:u64,digest:String,permission_epoch:u64)->Result<()>{
+    check_run_permission(tx,run,permission_epoch,None)?;
+    if revision!=0||tokens==0||digest.len()!=64||!digest.bytes().all(|b|b.is_ascii_hexdigit())||permission_epoch==0{return Err(Error::Invalid);}
+    let changed=tx.execute("UPDATE run_budgets SET token_reserved=token_reserved+?1,cost_reserved=cost_reserved+?2,requests=requests+1 WHERE run_id=?3 AND EXISTS(SELECT 1 FROM runs WHERE id=?3 AND state='active' AND owner_epoch=?4 AND NOT EXISTS(SELECT 1 FROM run_lifecycle l WHERE l.run_id=runs.id AND l.status!='active')) AND requests<request_limit AND ?1<=token_limit-token_charged-token_reserved AND ?2<=cost_limit-cost_charged-cost_reserved",params![sql_integer(tokens)?,sql_integer(cost)?,run.0.to_string(),sql_integer(epoch)?])?;
+    if changed!=1{return Err(Error::Denied);}
+    tx.execute("INSERT INTO inference_reservations(request_id,run_id,tokens,cost,request_digest,permission_epoch,state) VALUES(?1,?2,?3,?4,?5,?6,'reserved')",params![request.0.to_string(),run.0.to_string(),sql_integer(tokens)?,sql_integer(cost)?,digest,sql_integer(permission_epoch)?])?;
+    audit(&tx,&request.0.to_string(),"supervisor","inference-reserved")?;
+    Ok(())
 }
 
 fn sql_integer(value: u64) -> Result<i64> { value.try_into().map_err(|_| Error::Invalid) }
@@ -722,7 +747,7 @@ mod crash_boundaries {
             let temp=tempfile::tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join(".build/tmp")).unwrap();let project=Project::open(temp.path()).unwrap();
             let ledger=Ledger::open(&project,Path::new("state")).unwrap();let session=SessionId::default();ledger.transition(0,Transition::NewSession{id:session}).await.unwrap();ledger.shutdown().unwrap();
             if phase.starts_with("migration"){
-                let db=Connection::open(temp.path().join("state/ledger.sqlite")).unwrap();db.execute_batch("DROP TABLE run_lifecycle; DROP TABLE run_specs; DROP TABLE recovery_resolutions; UPDATE meta SET schema_version=3").unwrap();drop(db);
+                let db=Connection::open(temp.path().join("state/ledger.sqlite")).unwrap();db.execute_batch("DROP TABLE messages; DROP TABLE forwarding_consents; DROP TABLE inference_assignments; DROP TABLE coordination; DROP TABLE run_lifecycle; DROP TABLE run_specs; DROP TABLE recovery_resolutions; UPDATE meta SET schema_version=3").unwrap();drop(db);
             }
             let output=std::process::Command::new(std::env::current_exe().unwrap()).args(["--exact","ledger::crash_boundaries::child","--test-threads=1"]).env("RIVET_QUALIFICATION_ROOT",temp.path()).env("RIVET_QUALIFICATION_EXIT",phase).output().unwrap();assert_eq!(output.status.code(),Some(91),"{phase}: {}",String::from_utf8_lossy(&output.stderr));
             let report=repair_inspect(&project,Path::new("state")).unwrap();if report.sqlite_recovery_required||report.control_recovery_required{recover_state(&project,Path::new("state"),&report.snapshot_digest).await.unwrap();}
@@ -734,3 +759,18 @@ mod crash_boundaries {
 }
 
 pub(crate) fn lifecycle_inspect(project:&Project,path:&Path,run:RunId)->Result<crate::lifecycle::Snapshot>{let root=StateRoot::acquire(project,path,false)?.ok_or(Error::Invalid)?;let db=immutable(&root)?;check_schema(&db)?;check_admission(&db)?;crate::lifecycle::snapshot(&db,run)}
+
+pub(crate) fn coordination_digest(db:&Connection,run:RunId)->Result<Option<String>>{
+    let schema:u32=db.query_row("SELECT schema_version FROM meta",[],|r|r.get(0))?;if schema<6||!coordination::exists(db,run)?{return Ok(None);}let graph=coordination::graph(db,run)?;Ok(Some(crate::tools::sha256(&serde_json::to_vec(&graph).map_err(|_|Error::State)?)))
+}
+pub(crate) fn coordination_root(db:&Connection,run:RunId)->Result<Option<(TaskId,ActorId)>>{
+    if !coordination::exists(db,run)?{return Ok(None);}let graph=coordination::graph(db,run)?;Ok(Some((graph.plan.root().id,graph.plan.root().actor)))
+}
+pub(crate) fn coordination_done(db:&Connection,run:RunId)->Result<bool>{
+    if !coordination::exists(db,run)?{return Ok(true);}if !coordination::graph(db,run)?.done(){return Ok(false);}Ok(!db.query_row("SELECT EXISTS(SELECT 1 FROM messages WHERE run_id=?1 AND ack_digest IS NULL)",[run.0.to_string()],|r|r.get::<_,bool>(0))?)
+}
+
+pub(crate) fn graph_inspect(project:&Project,path:&Path,run:RunId)->Result<crate::scheduler::Graph>{let root=StateRoot::acquire(project,path,false)?.ok_or(Error::Invalid)?;let db=immutable(&root)?;check_schema(&db)?;check_admission(&db)?;coordination::graph(&db,run)}
+pub(crate) async fn next_message_sequence(ledger:&Ledger,run:RunId,sender:ActorId,recipient:ActorId)->Result<u64>{let result=std::sync::Arc::new(std::sync::Mutex::new(None));ledger.coordinate(0,crate::coordination::Command::NextSequence{run,sender,recipient,result:result.clone()}).await?;result.lock().map_err(|_|Error::State)?.take().ok_or(Error::State)}
+
+pub(crate) fn coordination_roles(db:&Connection,run:RunId)->Result<Option<(Mode,Vec<Role>)>>{if !coordination::exists(db,run)?{return Ok(None);}let graph=coordination::graph(db,run)?;Ok(Some((graph.plan.mode,graph.plan.agents.iter().map(|a|a.role.clone()).collect())))}

@@ -1,0 +1,4 @@
+CREATE TABLE coordination(run_id TEXT PRIMARY KEY REFERENCES runs(id),root_id TEXT NOT NULL REFERENCES tasks(id),revision INTEGER NOT NULL,document TEXT NOT NULL);
+CREATE TABLE inference_assignments(request_id TEXT PRIMARY KEY REFERENCES inference_reservations(request_id),task_id TEXT NOT NULL REFERENCES tasks(id),actor_id TEXT NOT NULL REFERENCES agents(id),fence INTEGER NOT NULL);
+CREATE TABLE messages(id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES runs(id),sender TEXT NOT NULL REFERENCES agents(id),recipient TEXT NOT NULL REFERENCES agents(id),sequence INTEGER NOT NULL,digest TEXT NOT NULL,envelope TEXT NOT NULL,ack_digest TEXT,UNIQUE(run_id,sender,recipient,sequence));
+CREATE TABLE forwarding_consents(run_id TEXT NOT NULL REFERENCES runs(id),reference TEXT NOT NULL,recipient TEXT NOT NULL REFERENCES agents(id),scope TEXT NOT NULL,epoch INTEGER NOT NULL,expiry INTEGER NOT NULL,PRIMARY KEY(run_id,reference,recipient,scope,epoch));

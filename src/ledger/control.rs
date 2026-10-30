@@ -11,14 +11,16 @@ const LIMIT:usize=1024*1024;
 struct Endpoint {version:u32,run:RunId,epoch:u64,nonce:uuid::Uuid}
 #[derive(Clone,Serialize,Deserialize)]
 #[serde(tag="action",rename_all="snake_case",deny_unknown_fields)]
-pub enum Action {Status,Pause,Stop,Disconnect,Approve{challenge:String}}
+pub enum Action {Status,Pause,Stop,Disconnect,Approve{challenge:String},Forward{recipient:ActorId,scope:String,text:String,epoch:u64,approved:String}}
 #[derive(Serialize,Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Wire {run:RunId,nonce:uuid::Uuid,command:Action}
 struct PendingReview {challenge:String,review:Review,reply:oneshot::Sender<bool>}
 #[derive(Clone)]
-pub struct Handle {pub cancel:CancellationToken,reason:Arc<AtomicU8>,pending:Arc<Mutex<Option<PendingReview>>>,pub snapshot:Arc<Mutex<Snapshot>>}
+pub struct Handle {pub cancel:CancellationToken,reason:Arc<AtomicU8>,pending:Arc<Mutex<Option<PendingReview>>>,pub snapshot:Arc<Mutex<Snapshot>>,forward:Arc<Mutex<std::collections::VecDeque<Forward>>>,graph:Arc<Mutex<Option<crate::scheduler::Graph>>>}
 impl Handle {
+    pub fn update_graph(&self,graph:crate::scheduler::Graph)->Result<()>{*self.graph.lock().map_err(|_|Error::State)?=Some(graph);Ok(())}
+    pub fn take_forward(&self)->Result<Option<Forward>>{Ok(self.forward.lock().map_err(|_|Error::State)?.pop_front())}
     pub fn reason(&self)->u8{self.reason.load(Ordering::SeqCst)}
     pub fn request(&self,reason:u8){self.reason.fetch_max(reason,Ordering::SeqCst);self.cancel.cancel();}
     pub fn update(&self,value:Snapshot)->Result<()>{*self.snapshot.lock().map_err(|_|Error::State)?=value;Ok(())}
@@ -37,7 +39,7 @@ impl Plane {
         let socket=format!("/proc/self/fd/{}/control.sock",dir.as_raw_fd());let listener=UnixListener::bind(&socket)?;dir.set_permissions("control.sock",Permissions::from_mode(0o600))?;
         let inode=dir.symlink_metadata("control.sock")?.ino();
         let endpoint=Endpoint{version:1,run:snapshot.spec.run,epoch:ledger.epoch(),nonce:uuid::Uuid::new_v4()};storage::json(&dir,"control.json",&endpoint,false)?;
-        let handle=Handle{cancel:CancellationToken::new(),reason:Arc::new(AtomicU8::new(0)),pending:Arc::new(Mutex::new(None)),snapshot:Arc::new(Mutex::new(snapshot))};
+        let handle=Handle{cancel:CancellationToken::new(),reason:Arc::new(AtomicU8::new(0)),pending:Arc::new(Mutex::new(None)),snapshot:Arc::new(Mutex::new(snapshot)),forward:Arc::new(Mutex::new(std::collections::VecDeque::new())),graph:Arc::new(Mutex::new(None))};
         let state=handle.clone();let expected=endpoint.clone();
         let worker=tokio::spawn(async move{
             // Sequential, bounded requests; a slow client cannot occupy the channel beyond 100 ms.
@@ -67,9 +69,14 @@ impl Drop for Plane {
 }
 fn respond(handle:&Handle,command:Action)->Result<serde_json::Value>{
     match command{
+        Action::Forward{recipient,scope,text,epoch,approved}=>{
+            let snapshot=handle.snapshot.lock().map_err(|_|Error::State)?;
+            let expected=forward_digest(snapshot.spec.run,recipient,&scope,&text,epoch)?;
+            if !handle.graph.lock().map_err(|_|Error::State)?.as_ref().is_some_and(|g|g.nodes.iter().any(|n|n.task.actor==recipient&&!matches!(n.state,crate::scheduler::Status::Succeeded|crate::scheduler::Status::Failed|crate::scheduler::Status::Cancelled)))||snapshot.coordination_digest.is_none()||handle.cancel.is_cancelled()||snapshot.spec.permission_epoch!=epoch||approved!=expected{return Err(Error::Denied);}let mut queue=handle.forward.lock().map_err(|_|Error::State)?;if queue.len()>=8{return Err(Error::Busy);}queue.push_back(Forward{recipient,scope,text,epoch,id:MessageId(uuid::Uuid::parse_str(&expected[..32]).map_err(|_|Error::State)?)});Ok(serde_json::json!({"accepted":true,"durable":false,"delivery":"queued","decision_scope_digest":expected}))
+        },
         Action::Status=>{
             let snapshot=handle.snapshot.lock().map_err(|_|Error::State)?.clone();let review=handle.pending.lock().map_err(|_|Error::State)?.as_ref().map(|p|serde_json::json!({"challenge":p.challenge,"review":p.review}));
-            Ok(serde_json::json!({"snapshot":snapshot,"review":review,"cancellation_requested":handle.cancel.is_cancelled(),"control_reason":handle.reason()}))
+            Ok(serde_json::json!({"snapshot":snapshot,"review":review,"cancellation_requested":handle.cancel.is_cancelled(),"control_reason":handle.reason(),"coordination":handle.graph.lock().map_err(|_|Error::State)?.clone(),"queued_forwarding":handle.forward.lock().map_err(|_|Error::State)?.len()}))
         },
         Action::Disconnect if handle.snapshot.lock().map_err(|_|Error::State)?.detached=>Ok(serde_json::json!({"detached":true,"paused":false,"new_permissions":false})),
         Action::Pause|Action::Stop|Action::Disconnect=>{
@@ -183,3 +190,7 @@ pub fn verify_detached()->Result<()>{
     for(file,expected)in[("cpu.max","100000 100000"),("memory.max","536870912"),("memory.swap.max","0"),("pids.max","64")]{if std::fs::read_to_string(directory.join(file))?.trim()!=expected{return Err(Error::Unsupported);}}
     Ok(())
 }
+
+#[derive(Clone)]
+pub struct Forward {pub recipient:ActorId,pub scope:String,pub text:String,pub epoch:u64,pub id:MessageId}
+pub fn forward_digest(run:RunId,recipient:ActorId,scope:&str,text:&str,epoch:u64)->Result<String>{if scope.is_empty()||scope.len()>256||text.is_empty()||text.len()>4096{return Err(Error::Invalid);}Ok(crate::tools::sha256(&serde_json::to_vec(&(run,recipient,scope,text,epoch)).map_err(|_|Error::Invalid)?))}

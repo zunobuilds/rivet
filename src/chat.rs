@@ -186,7 +186,7 @@ pub async fn run_controlled(project:&Project,state:&Path,config:ProviderConfig,o
     ledger.shutdown()?;result?;if final_state.state!="completed"{return Err(Error::Recovery);}Ok(report)
 }
 
-async fn approve(reviewer:&mut dyn Reviewer,cancel:&CancellationToken,deadline:u64,review:Review)->Result<bool>{
+pub(crate) async fn approve(reviewer:&mut dyn Reviewer,cancel:&CancellationToken,deadline:u64,review:Review)->Result<bool>{
     let remaining=deadline.saturating_sub(now()?);
     tokio::select!{biased;_=cancel.cancelled()=>Err(Error::Interrupted),_=tokio::time::sleep(std::time::Duration::from_secs(remaining))=>Err(Error::Denied),result=reviewer.approve(review)=>result}
 }

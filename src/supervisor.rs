@@ -48,7 +48,7 @@ mod tests {
         let mut spec = spec(); assert!(spec.validate().is_ok());
         spec.roles.push(Role::Independent); assert!(spec.validate().is_err());
         spec.roles = vec![Role::Independent];
-        for mode in [Mode::Pair,Mode::Crew,Mode::Fleet,Mode::Mesh,Mode::Adaptive] { spec.mode = mode; assert!(matches!(spec.validate(), Err(Error::Unsupported))); }
+        for mode in [Mode::Pair,Mode::Crew,Mode::Fleet,Mode::Mesh,Mode::Adaptive] { spec.mode = mode; assert!(matches!(spec.validate(), Err(Error::Invalid|Error::Unsupported))); }
         let supervisor = Supervisor::default();
         let started = Arc::new(AtomicUsize::new(0)); let (tx,_rx) = mpsc::channel(1);
         assert!(matches!(supervisor.drive(&spec,Fake {proposal:None,started:started.clone(),closed:Arc::new(AtomicUsize::new(0))},InferRequest {schema_version:1,id:RequestId::default(),prompt:"must not start".into(),context:None},tx),Err(Error::Unsupported)));
@@ -229,6 +229,7 @@ impl Supervisor {
         let ledger_stop = ledger.cancellation();
         let revoked = broker.revocation();
         let remaining = expiry.min(spec.deadline).saturating_sub(now);
+        let observed_action=action.clone();
         let work = self.tasks.spawn_blocking(move || files.perform(&action, &worker_stop));
         tokio::pin!(work);
         let effect = tokio::select! { biased;
@@ -243,7 +244,14 @@ impl Supervisor {
             Err(Error::Interrupted) => Outcome::Cancelled,
             Err(_) => Outcome::Failed,
         };
-        let artifacts=if let Ok(result)=&effect{if result.diff.is_empty(){vec![]}else{vec![ledger.retain_artifact(proposal.operation,result.diff.as_bytes().to_vec(),"text/x-diff").await?.digest]}}else{vec![]};
+        let mut artifacts=vec![];
+        if let Ok(result)=&effect{
+            if !result.diff.is_empty(){artifacts.push(ledger.retain_artifact(proposal.operation,result.diff.as_bytes().to_vec(),"text/x-diff").await?.digest);}
+            if let Some(revision)=&result.revision{
+                let path=match &observed_action{FileAction::Read{path}|FileAction::Write{path,..}|FileAction::Patch{path,..}=>Some(path.clone()),FileAction::Rename{to,..}=>Some(to.clone()),_=>None};
+                if let Some(path)=path{let observation=crate::coordination::Observation::File{revisions:vec![crate::scheduler::RevisionRef{path,sha256:revision.digest.clone()}]};artifacts.push(ledger.retain_artifact(proposal.operation,serde_json::to_vec(&observation).map_err(|_|Error::State)?,crate::coordination::OBSERVATION_MEDIA).await?.digest);}
+            }
+        }
         let receipt = ExecutionReceipt {
             schema_version: 1, operation: proposal.operation, attempt: proposal.attempt, outcome,
             exit_code: None, error: effect.as_ref().err().map(|e|e.kind().to_owned()), artifacts,
@@ -292,6 +300,7 @@ impl Supervisor {
         ledger.transition(2,Transition::Dispatched{operation:proposal.operation}).await?;
         let port=ledger.port();
         let stop=self.stop.child_token();let operation=proposal.operation;let ledger_stop=ledger.cancellation();let revoked=broker.revocation();
+        let observed_revisions=request.files.iter().map(|(path,text)|crate::scheduler::RevisionRef{path:path.clone(),sha256:crate::tools::sha256(text.as_bytes())}).collect::<Vec<_>>();
         let mut request=request;
         request.timeout_ms=request.timeout_ms.min(expiry.saturating_sub(now)*1000).min(spec.deadline.saturating_sub(now)*1000);
         let effect=self.tasks.spawn(async move{
@@ -303,7 +312,9 @@ impl Supervisor {
             }
         }).await.map_err(|_|Error::State)?;
         let outcome=match &effect{Ok(r) if r.cancelled=>Outcome::Cancelled,Ok(r) if r.exit_code==Some(0)&&!r.truncated=>Outcome::Succeeded,Ok(_) if is_mcp=>Outcome::Unknown,Ok(_)=>Outcome::Failed,Err(_)=>Outcome::Unknown};
-        let receipt=ExecutionReceipt{schema_version:1,operation,attempt:proposal.attempt,outcome,exit_code:effect.as_ref().ok().and_then(|r|r.exit_code),error:effect.as_ref().err().map(|e|e.kind().into()),artifacts:vec![],before_revision:None,after_revision:effect.as_ref().ok().map(|r|r.projection_digest.clone()),redacted_output:effect.as_ref().ok().map_or_else(String::new,|r|format!("stdout_sha256={};stderr_sha256={};truncated={}",crate::tools::sha256(r.stdout.as_bytes()),crate::tools::sha256(r.stderr.as_bytes()),r.truncated))};
+        let mut artifacts=vec![];
+        if !is_mcp{if let Ok(result)=&effect{let observation=crate::coordination::Observation::Check{projection:result.projection_digest.clone(),revisions:observed_revisions,exit_code:result.exit_code,truncated:result.truncated,cancelled:result.cancelled};artifacts.push(ledger.retain_artifact(operation,serde_json::to_vec(&observation).map_err(|_|Error::State)?,crate::coordination::OBSERVATION_MEDIA).await?.digest);}}
+        let receipt=ExecutionReceipt{schema_version:1,operation,attempt:proposal.attempt,outcome,exit_code:effect.as_ref().ok().and_then(|r|r.exit_code),error:effect.as_ref().err().map(|e|e.kind().into()),artifacts,before_revision:None,after_revision:effect.as_ref().ok().map(|r|r.projection_digest.clone()),redacted_output:effect.as_ref().ok().map_or_else(String::new,|r|format!("stdout_sha256={};stderr_sha256={};truncated={}",crate::tools::sha256(r.stdout.as_bytes()),crate::tools::sha256(r.stderr.as_bytes()),r.truncated))};
         let terminal=matches!(receipt.outcome,Outcome::Succeeded|Outcome::Failed);
         ledger.transition(3,Transition::Receipt{receipt}).await?;
         if terminal{ledger.transition(4,Transition::Terminal{operation}).await?;}

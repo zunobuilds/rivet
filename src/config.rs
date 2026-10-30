@@ -94,3 +94,12 @@ impl Project {
         Config::parse(&input)
     }
 }
+
+impl Project {
+    /// Explicit trusted CLI input, never exposed as a model-visible file capability.
+    pub(crate) fn input(&self,path:&Path)->Result<Vec<u8>>{
+        use std::io::Read;use std::os::unix::fs::MetadataExt;
+        let relative=self.relative(path)?;let fd=rustix::fs::openat2(&self.dir,&relative,rustix::fs::OFlags::RDONLY|rustix::fs::OFlags::CLOEXEC|rustix::fs::OFlags::NONBLOCK,rustix::fs::Mode::empty(),rustix::fs::ResolveFlags::BENEATH|rustix::fs::ResolveFlags::NO_SYMLINKS|rustix::fs::ResolveFlags::NO_XDEV).map_err(|_|Error::Invalid)?;let mut file=std::fs::File::from(fd);let before=file.metadata()?;
+        if !before.is_file()||before.nlink()!=1||before.len()>65536{return Err(Error::Invalid);}let mut bytes=vec![];(&mut file).take(65537).read_to_end(&mut bytes)?;let after=file.metadata()?;if bytes.len() as u64!=before.len()||before.mtime()!=after.mtime()||before.mtime_nsec()!=after.mtime_nsec(){return Err(Error::Conflict);}Ok(bytes)
+    }
+}

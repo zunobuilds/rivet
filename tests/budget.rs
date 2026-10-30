@@ -32,7 +32,7 @@ fn v1_upgrade_has_verified_private_backup_and_keeps_read_only_inspection_nonmuta
     for name in ["owner.lock","ledger.sqlite"]{fs::set_permissions(state.join(name),fs::Permissions::from_mode(0o600)).unwrap();}
     let project=Project::open(temp.path()).unwrap();assert_eq!(ledger::inspect(&project,Path::new("state")).unwrap().state,"quiescent");assert_eq!(fs::read_dir(&state).unwrap().count(),2);
     Ledger::open(&project,Path::new("state")).unwrap().shutdown().unwrap();
-    let backups=fs::read_dir(&state).unwrap().map(|e|e.unwrap().path()).filter(|p|p.is_file()&&p.file_name().unwrap().to_string_lossy().starts_with("pre-v5-")).collect::<Vec<_>>();assert_eq!(backups.len(),1);
+    let backups=fs::read_dir(&state).unwrap().map(|e|e.unwrap().path()).filter(|p|p.is_file()&&p.file_name().unwrap().to_string_lossy().starts_with("pre-v6-")).collect::<Vec<_>>();assert_eq!(backups.len(),1);
     let backup=rusqlite::Connection::open_with_flags(&backups[0],rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();let version:i64=backup.query_row("SELECT schema_version FROM meta",[],|r|r.get(0)).unwrap();assert_eq!(version,1);let check:String=backup.query_row("PRAGMA quick_check",[],|r|r.get(0)).unwrap();assert_eq!(check,"ok");
-    let db=rusqlite::Connection::open(state.join("ledger.sqlite")).unwrap();let version:i64=db.query_row("SELECT schema_version FROM meta",[],|r|r.get(0)).unwrap();assert_eq!(version,5);
+    let db=rusqlite::Connection::open(state.join("ledger.sqlite")).unwrap();let version:i64=db.query_row("SELECT schema_version FROM meta",[],|r|r.get(0)).unwrap();assert_eq!(version,6);
 }

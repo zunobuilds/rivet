@@ -35,8 +35,7 @@ pub struct RunSpec {
 impl RunSpec {
     pub fn validate(&self) -> Result<()> {
         if self.schema_version != SCHEMA || self.step_budget == 0 || self.deadline == 0 { return Err(Error::Invalid); }
-        if self.mode != Mode::Solo { return Err(Error::Unsupported); }
-        if self.roles != [Role::Independent] { return Err(Error::Invalid); }
+        validate_roles(&self.mode,&self.roles,false)?;
         Ok(())
     }
 }
@@ -67,4 +66,16 @@ pub struct ExecutionReceipt {
     pub before_revision: Option<String>,
     pub after_revision: Option<String>,
     pub redacted_output: String,
+}
+
+pub fn validate_roles(mode:&Mode,roles:&[Role],minimal:bool)->Result<()>{
+    if minimal&&*mode!=Mode::Solo{return Err(Error::Denied);}if roles.len()>32{return Err(Error::Invalid);}
+    let n=|role|roles.iter().filter(|r|**r==role).count();
+    let valid=match mode{
+        Mode::Solo=>roles==[Role::Independent],
+        Mode::Pair=>roles.len()==2&&n(Role::Lead)==1&&n(Role::Operator)==1,
+        Mode::Crew=>n(Role::Lead)==1&&n(Role::Reviewer)==1&&n(Role::Operator)>=1&&roles.len()==2+n(Role::Operator),
+        Mode::Fleet=>n(Role::Director)==1&&n(Role::Lead)>=1&&n(Role::Reviewer)>=1&&n(Role::Operator)>=1&&roles.len()==1+n(Role::Lead)+n(Role::Reviewer)+n(Role::Operator),
+        Mode::Mesh|Mode::Adaptive=>return Err(Error::Unsupported),
+    };if valid{Ok(())}else{Err(Error::Invalid)}
 }
