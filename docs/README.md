@@ -12,6 +12,6 @@ This manual describes the current source checkout. Proposed features are isolate
 8. [Troubleshooting](troubleshooting.md)
 9. [Contributing](contributing.md)
 10. [Roadmap](roadmap.md)
-11. [Versioning policy](versioning.md) and [release readiness](release-readiness.md)
+11. [Versioning policy](versioning.md), [release readiness](release-readiness.md) and [alpha.2 notes](releases/v0.1.0-alpha.2.md)
 
 Need a first result? Use [model-free inspection](solo.md) before configuring inference. Need a source build? Start with [prerequisites and containment](building.md). Encountered a stopped run? Use [operations](operations.md) and preserve evidence. Product proposals belong in the [research index](../planning/README.md).

@@ -2,13 +2,17 @@
 
 **Status: published pre-release, with outstanding qualification.** The owner published [Rivet v0.1.0-alpha.1](https://github.com/zunobuilds/rivet/releases/tag/v0.1.0-alpha.1) on 30 October 2026 at 15:01:27 UTC. GitHub reports `draft=false`, `prerelease=true` and no uploaded assets. GitHub's automatic source archives are separate from uploaded binaries.
 
+## Alpha.2 preparation
+
+The owner authorized a new package version after the alpha.1 correction. Commit `f8a56d1` sets Cargo.toml and the root Cargo.lock entry to `0.1.0-alpha.2`; Cargo metadata and the dependency-preserving lockfile comparison passed. [Alpha.2 release notes](releases/v0.1.0-alpha.2.md) are prepared locally. An alpha.2 build, CLI-version check and full suite are still pending; the alpha.1 correction results below must not be relabeled as alpha.2 qualification. No alpha.2 tag or GitHub release was created by this preparation.
+
 ## Version discrepancy
 
 The published tag points to commit `813db12e72972b7ea275077d61361d15f670acb9`. Its Cargo.toml and root Cargo.lock entry contain `0.1.0`, despite the tag name `v0.1.0-alpha.1`.
 
 The owner subsequently authorized aligning the working source's manifest and lockfile to `0.1.0-alpha.1`. That correction is a new local commit; it does not repair the existing release archive. The dependency-audit script now reads the package version from Cargo.toml instead of hard-coding `0.1.0`.
 
-| Surface | Published tag | Corrected working source |
+| Surface | Published alpha.1 tag | Alpha.1 correction (historical) |
 | --- | --- | --- |
 | Cargo.toml | `0.1.0` | `0.1.0-alpha.1` |
 | Cargo.lock root `rivet` entry | `0.1.0` | `0.1.0-alpha.1`; dependency versions unchanged |

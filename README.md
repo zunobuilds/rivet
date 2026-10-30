@@ -41,7 +41,7 @@ See [verification](planning/research/post-p3-verification.md) for checks reprodu
 
 ## Versioning and releases
 
-Rivet follows [Semantic Versioning 2.0.0](https://semver.org/). See the [versioning policy](docs/versioning.md), [v0.1.0-alpha.1 notes](docs/releases/v0.1.0-alpha.1.md) and [release-readiness checklist](docs/release-readiness.md). [v0.1.0-alpha.1](https://github.com/zunobuilds/rivet/releases/tag/v0.1.0-alpha.1) is published as an experimental pre-release. Its tagged package version is `0.1.0`; the subsequent package-version correction and remaining qualification gaps are recorded in the checklist.
+Rivet follows [Semantic Versioning 2.0.0](https://semver.org/). See the [versioning policy](docs/versioning.md), [v0.1.0-alpha.1 notes](docs/releases/v0.1.0-alpha.1.md), [v0.1.0-alpha.2 preparation notes](docs/releases/v0.1.0-alpha.2.md) and [release-readiness checklist](docs/release-readiness.md). [v0.1.0-alpha.1](https://github.com/zunobuilds/rivet/releases/tag/v0.1.0-alpha.1) is published as an experimental pre-release. Its tagged package version is `0.1.0`; the subsequent package-version correction and remaining qualification gaps are recorded in the checklist.
 
 ## License
 
