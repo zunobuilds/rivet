@@ -1,5 +1,7 @@
 # Extended implementation run — 30 October 2026
 
+Current owner amendment: the historical mandatory 72-hour P2b soak/dependency gate recorded below is superseded by [bounded P2–P3 qualification](../P2_P3_QUALIFICATION.md). Optional multi-day endurance is deferred to P7; historical test results remain unchanged.
+
 Owner authorized P1a cleanup and P1b through P3c in dependency order, with stage-approval/stopping gates waived for this run only. All other repository/permission boundaries remain. Baseline: `176bbb77bc86b3477d569962f148ba610b2edaf4`. No push authorized.
 
 ## P1a cleanup checkpoint

@@ -1,0 +1,23 @@
+# P2–P3 bounded qualification contract
+
+Owner amendment, 30 October 2026: the mandatory 72-hour P2b soak and its dependency gate are removed. P2a and P2b must pass the bounded tests below before P3. Optional multi-day endurance testing is deferred to P7 and is not an implementation dependency. This changes test duration, not permission, recovery, containment, fencing, budget, role-count or cancellation requirements. Historical evidence remains historical; no duration or result is retroactively claimed.
+
+## Required P2 acceptance
+
+- Crash/restart: exercise authorization, intent, dispatch, effect, blob activation/link, receipt and terminal boundaries, plus recovery, migration and restore activation boundaries. Use actual owned child-process exits and deterministic fault injection. Every tested ambiguous effect remains unknown or explicitly reconciled; no automatic inference/command/Git replay. Preserve raw journals and displaced state. Repeat the crash matrix at least twice with separate fixtures.
+- Restore: prove a usable checkpoint, artifact integrity and matching project identity. Reject changed review digests, newer schemas, invalid backups, missing/corrupt blobs, unsafe paths, busy ownership and missing source evidence. Advance fencing across rollback; contain old/queued children before admission. Fault every restore activation boundary and demonstrate explicit completion or safe refusal with preserved evidence.
+- Storage: force bounded SQLite-full, busy, audit-failure and artifact-write failures in repository-local fixtures. Retain orphans; never delete original evidence to pass a check. No host disk exhaustion or power/clock change is authorized.
+- Lifecycle: exercise pause/resume/stop, checkpoint/restart, disconnect/reconnect, deadline and credential/grant expiry, quota exhaustion and provider EOF/outage using synthetic providers and injected clocks. Controls bypass saturated ordinary queues. No silent renewal or detached execution without explicit policy. Cancellation acknowledgment target remains 250 ms; owned-child grace remains 5 seconds plus up to 2 seconds to reap, with unknown/unreaped reported as failure.
+- Bounded stress: at least 1000 synthetic dispatch/control steps across ten reproducible seeds, 100 control interleavings and ten restart cycles. Each scenario has a timeout (30 seconds for in-memory/ledger fixtures; 90 seconds for an owned native worker fixture). Assert bounded queues/resources, single ownership, no leaked grants/children and no overspend. Record actual counts/times/failures; a short test is not evidence of multi-day endurance.
+
+P2 acceptance requires zero unsafe replay, escaped effect, credential disclosure, stale-owner effect, role/permission bypass or silently successful unknown outcome in these fixtures. A failed test must be fixed or leave the affected gate explicitly incomplete. Synthetic clock jumps and process replacement stand in for reboot/suspend lifecycle boundaries; they do not claim actual host reboot/power-loss qualification.
+
+## Required P3 acceptance
+
+Validate Solo/Pair/Crew/Fleet exact approved counts and specialist invariants, then task dependencies/cycles, fenced single-owner claims and overlapping writer leases, fair FIFO/round-robin service, reviewer evidence and consent-bound forwarding. Exercise stale claims, duplicate/out-of-order messages, redelivery, reviewer failure, cancellation and budget exhaustion. Use at least 1000 deterministic scheduler steps and ten seeds; assert no starvation among runnable parents and no successful parent with unresolved required children/effects.
+
+Shared Model, Concurrent and Model Relay use the same scheduler, isolated contexts, aggregate budgets and explicit capacity profiles. Test shared-weight/KV accounting, loading overlap/reserve, unknown capacity, slot/memory/cost exhaustion, serialized relay and authorized activation/reconciliation. Cookbook imports explicit read-only llmfit JSON; it neither executes llmfit nor acquires or benchmarks a model. Mesh and Adaptive retain explicit allowed modes/count ceilings and quiescent transitions; test conflicts, revoked allowed lists and ambiguous requirements. All inference fixtures are synthetic; no live model, paid call or runtime/model acquisition is implied.
+
+## Optional P7 endurance
+
+An owner may separately authorize multi-day endurance under the release matrix. Predeclare its duration, host/lifecycle permissions and thresholds; record actual elapsed time and failures. It is optional, not a P2/P3 prerequisite. No multi-day support claim may exceed evidence from the tested profile.

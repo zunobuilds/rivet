@@ -4,6 +4,8 @@
 
 Current evidence: [P1a implementation](research/p1a-evidence.md) and [extended-run checkpoint/handoff](research/extended-run.md). P2a–P3c have not passed acceptance; the file-foundation history is in the extended-run handoff and the newly permitted delegation route is in [P1b runtime evidence](research/p1b-runtime.md). P0.5/P0.6 documents below remain design/history references, not implementation claims. No new push is authorized; historical user-reported pushes do not grant one.
 
+The owner has replaced the mandatory 72-hour gate with the [bounded P2–P3 contract](P2_P3_QUALIFICATION.md); historical evidence below does not reinstate that gate.
+
 ## Current implementation handoff
 
 | Stage | Current result |
@@ -13,7 +15,7 @@ Current evidence: [P1a implementation](research/p1a-evidence.md) and [extended-r
 | P1c | Compatible streamed transport, bounded context/budgets, reviewed terminal Solo loop, continuation and source recipe; synthetic/native evidence in [P1c](research/p1c-solo.md). No live inference tested. |
 | P1d | Synthetic Ollama/Anthropic, scoped rmcp stdio and content-pinned skills; [evidence](research/p1d-adapters.md). No live inference/keyring qualification. |
 | P2a | Partial: schema-v3 intents/artifacts/fencing, model-free inspection/recovery/backup and real process-crash tests. Restore/full acceptance remain; [checkpoint](research/p2a-checkpoint.md). |
-| P2b | Unstarted; requires accepted P2a and actual 72-hour lifecycle qualification. |
+| P2b | Unstarted; requires accepted P2a and [bounded lifecycle/fault/stress qualification](P2_P3_QUALIFICATION.md). Optional endurance is deferred to P7. |
 | P3a–P3c | Unstarted; require accepted P2 and preceding P3 steps. Approved mode cardinalities unchanged. |
 
 Current next work: finish P2a reconciliation/crash coverage and safe explicit restore, following the [exact handoff](research/p2a-checkpoint.md#remaining-work--exact-next-handoff). P2a is not accepted; P2b/P3 remain unstarted. The owner supplied a narrow host-access exception and the old delegation blocker is resolved for temporary user-systemd units. See [runtime evidence](research/p1b-runtime.md); do not use the historical blocker text as a reason to stop this authorized continuation.

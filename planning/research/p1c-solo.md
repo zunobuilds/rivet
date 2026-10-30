@@ -1,5 +1,7 @@
 # P1c Solo transport and coding evidence — 30 October 2026
 
+Current owner amendment: the historical mandatory 72-hour P2b soak/dependency gate recorded below is superseded by [bounded P2–P3 qualification](../P2_P3_QUALIFICATION.md). Optional multi-day endurance is deferred to P7; historical test results remain unchanged.
+
 Depends on the [P1b qualification](p1b-runtime.md), committed as `d52811b`; the earlier cleanup/delegation commits are preserved. The owner authorized sequential work through P3c, source-only crates.io fetching and synthetic providers, not live inference or paid calls. Every HTTP request in qualification went to an in-process synthetic loopback server. No runtime/model, installation, credential, host certificate store, sibling, push or remote change was used.
 
 ## Implemented bounded flow

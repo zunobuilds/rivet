@@ -9,7 +9,7 @@ Every stage must end with evidence-backed results, failed/unrun checks, a durabl
 | Stage | Depends on | Useful outcome |
 | --- | --- | --- |
 | P1a–P1d Solo foundation | Approve selected P1a defaults and compliant build/acquisition scope in the [decision register](open-decisions.md) | A bounded, permission-controlled Solo coding workflow and model-free administration. |
-| P2a–P2b Recovery | P1 operation/grant IDs, receipts and provider boundaries | Crash reconciliation, restart and qualified multi-day runs. |
+| P2a–P2b Recovery | P1 operation/grant IDs, receipts and provider boundaries | Crash reconciliation, restart and bounded autonomous runs; optional endurance at P7. |
 | P3a–P3c Hierarchies | P2 ownership/message persistence and budget accounting | Pair/Crew/Fleet first, then qualified Shared Model/Relay, Mesh/Adaptive. |
 | P4a Browser | P1 sandbox/broker, P2 cancellation/artifacts; P3 not technically required for initial browser adapter | Qualified Playwright/Chromium workflows. |
 | P4b Native Linux | P4 permission/artifact conventions, P2 recovery; separate desktop qualification | Consent-driven semantic native inspection and separately granted screen/input. |
@@ -57,7 +57,7 @@ Security and recovery are cross-cutting: P1 needs safe cancellation and effect i
 
 **Deliverables/checks:** synthetic provider/MCP fixtures, pinned auth/versioning, dynamic schema and reverse-request denial, no unapproved sampling or plugin execution, common usage/cancellation evidence. Optional live/remote checks need separate destination/data/cost approval. Acceptance: additional adapters preserve P1c safety/administration and do not duplicate runtime ownership; local checkpoint then STOP.
 
-## P2: durable recovery and multi-day autonomy
+## P2: durable recovery and bounded autonomy
 
 ### P2a — transactions, replay and reconciliation
 
@@ -75,9 +75,9 @@ Security and recovery are cross-cutting: P1 needs safe cancellation and effect i
 
 **Deliverables:** pause/stop/status, out-of-band cancellation, run deadlines and budgets, credential/approval expiry handling, restart summary, retry limits and explicit blocked/waiting states. Initial disconnect policy may pause; a later approved detached mode must reuse the same supervisor and ledger.
 
-**Future checks:** an explicitly approved multi-day soak duration; suspend/reboot, provider outage, quota exhaustion, UI loss, user absence, disk pressure, keyring lock and cancellation under saturation. Record actual elapsed time, resource peaks, recovery points and unknown effects; fake providers first, model benchmarks only by opt-in.
+**Required bounded checks:** [P2–P3 qualification contract](P2_P3_QUALIFICATION.md): repeated owned-process crash/restart and restore matrices, 1000 synthetic steps across ten seeds, 100 control interleavings, ten restarts, injected clocks/outages/disconnects and bounded storage/cancellation faults. Record actual counts/time/resource results and unknown effects. No host reboot/suspend/clock changes; optional multi-day endurance is deferred to P7. Model benchmarks remain opt-in.
 
-**Acceptance:** measured recovery/cancellation and budget behavior meet targets set before testing; no silent grant renewal, hidden cloud fallback or unbounded retry. Multi-day support is claimed only for the tested lifecycle/profile. Risk: long authorization being interpreted as permission to change task scope.
+**Acceptance:** all required bounded qualification cases pass before P3; there is no elapsed 72-hour gate. Measured recovery/cancellation and budget behavior meet targets set before testing; no silent grant renewal, hidden cloud fallback or unbounded retry. Multi-day support is claimed only for the tested lifecycle/profile. Risk: long authorization being interpreted as permission to change task scope.
 
 ## P3: hierarchy execution and resource feasibility
 
@@ -159,7 +159,7 @@ Security and recovery are cross-cutting: P1 needs safe cancellation and effect i
 
 **Deliverables:** supported Linux distribution/architecture/kernel/desktop matrix; reproducible source build/install/uninstall and upgrade/rollback procedures; provider/tool conformance profiles; security/recovery/soak evidence; dependency/license/advisory inventory; user documentation from real commands and expected results; release checklist and known limitations.
 
-**Future checks:** complete offline and no-model paths; all role counts, modes, execution policies and preset boundaries; crash/restore and multi-day scenarios; browser/native fixtures; Unrivet absence/removal and authorized compatibility tests; secret/egress/injection tests; migration/update/uninstall preserving user data; terminal accessibility and error usability. Set performance, resource, cancellation, recovery and soak thresholds before qualification and record hardware/configurations. Paid/model benchmarks remain opt-in.
+**Future checks:** complete offline and no-model paths; all role counts, modes, execution policies and preset boundaries; crash/restore and bounded lifecycle stress; optional separately approved multi-day endurance; browser/native fixtures; Unrivet absence/removal and authorized compatibility tests; secret/egress/injection tests; migration/update/uninstall preserving user data; terminal accessibility and error usability. Set performance, resource, cancellation, recovery and soak thresholds before qualification and record hardware/configurations. Paid/model benchmarks remain opt-in.
 
 **Acceptance:** every public capability claim has reproducible evidence on the stated matrix; critical security/recovery failures block release; licensing/trust decisions have accountable approval; no release/publication without separate authorization. Linux-only v1.0 follows useful pre-1.0 milestones, not the first prototype.
 

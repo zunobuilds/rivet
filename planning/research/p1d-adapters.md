@@ -1,5 +1,7 @@
 # P1d adapters, MCP and skills — 30 October 2026
 
+Current owner amendment: the historical mandatory 72-hour P2b soak/dependency gate recorded below is superseded by [bounded P2–P3 qualification](../P2_P3_QUALIFICATION.md). Optional multi-day endurance is deferred to P7; historical test results remain unchanged.
+
 Built on P1c `cf01152`, using the owner's sequential-stage and synthetic-provider authorization. No live inference, real credential, paid call, installation, runtime/model download, host configuration change, sibling access or push.
 
 ## Native profiles and credentials
