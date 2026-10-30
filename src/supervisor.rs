@@ -196,7 +196,7 @@ impl Supervisor {
         let descriptor = self.registry.get("rivet:files",1).ok_or(Error::Unsupported)?;
         if descriptor.build_digest != proposal.descriptor_digest { return Err(Error::Denied); }
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| Error::State)?.as_secs();
-        if proposal.descriptor_digest != DESCRIPTOR 
+        if proposal.descriptor_digest != DESCRIPTOR
             || spec.permission_epoch != broker.epoch() || now >= spec.deadline
             || spec.project != ledger.project_id() || files.identity() != ledger.workspace_identity() { return Err(Error::Denied); }
         ledger.transition(0, Transition::Propose { run: spec.run, proposal: proposal.clone() }).await?;
