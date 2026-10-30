@@ -6,6 +6,8 @@ import tempfile
 import uuid
 
 root=pathlib.Path(__file__).resolve().parent.parent
+build_digest=subprocess.check_output([str(root/'.build/target/debug/rivet'),'--version'],text=True).strip().split()[-1]
+assert len(build_digest)==64 and all(c in '0123456789abcdef' for c in build_digest)
 unit='rivet-boundary-'+uuid.uuid4().hex
 with tempfile.TemporaryDirectory(dir=root/'.build/tmp') as directory:
     inputs=pathlib.Path(directory)
@@ -41,7 +43,7 @@ print(json.dumps({'landlock':'fully-enforced','filesystem':'restricted','network
         '--ro-bind','/usr/bin/ld.bfd','/etc/alternatives/ld','--proc','/proc','--dev','/dev',
         '--ro-bind',str(inputs),'/work/input','--ro-bind',str(root/'.build/target/debug/rivet'),'/rivet-worker',
         '--size','67108864','--tmpfs','/work/tmp','--symlink','work/tmp','/tmp','--chdir','/work/input',
-        '--clearenv','--setenv','PATH','/usr/bin','--remount-ro','/','--','/rivet-worker','__worker-bootstrap','--',
+        '--clearenv','--setenv','PATH','/usr/bin','--remount-ro','/','--','/rivet-worker','__worker-bootstrap',build_digest,'--',
         '/usr/bin/python3','-B','/work/input/probe.py']
     try:
         result=subprocess.run(command,capture_output=True,text=True,timeout=25)

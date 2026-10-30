@@ -17,6 +17,8 @@ pub enum Error {
     Denied,
     #[error("transition conflict or stale owner")]
     Conflict,
+    #[error("Git operation failed during {0}")]
+    GitPhase(&'static str),
     #[error("interrupted")]
     Interrupted,
 }
@@ -25,7 +27,7 @@ impl Error {
         match self {
             Self::Invalid => "invalid-input", Self::Unsupported => "unsupported", Self::Busy => "busy",
             Self::Recovery => "recovery-required", Self::Denied => "denied", Self::Conflict => "conflict",
-            Self::Interrupted => "interrupted", Self::State => "state-failure",
+            Self::Interrupted => "interrupted", Self::State => "state-failure", Self::GitPhase(_) => "git-failure",
         }
     }
     pub fn exit_code(&self) -> i32 {

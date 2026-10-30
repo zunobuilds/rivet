@@ -30,11 +30,12 @@ async fn qualified_worker_checks_flood_and_revocation_clean_up(){
     }
     let request=ProcessRequest{program:"/usr/bin/python3".into(),args:vec!["-c".into(),"import os,signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); os.fork(); time.sleep(60)".into()],files:BTreeMap::new(),timeout_ms:15000};
     let proposal=ToolProposal{schema_version:1,operation:OperationId::default(),attempt:1,task,actor,descriptor_digest:DESCRIPTOR.into(),arguments:serde_json::to_value(&request).unwrap(),resources:request.resources(spec.project),preconditions:vec![],budget_reservation:"none".into()};
-    let unit=format!("rivet-worker-{}.service",proposal.operation.0);let revoke=broker.revocation();
+    let unit_record=root.join(".build/runtime").join(proposal.operation.0.to_string()).join("unit.txt");let revoke=broker.revocation();
     let grant=broker.approve_process(&proposal,&proposal.resources,now()+60,now()).unwrap();
     let operation=supervisor.execute_process(&spec,&ledger,&mut broker,proposal,grant);
     let controller=async{
         for _ in 0..100{
+            let unit=match std::fs::read_to_string(&unit_record){Ok(unit)=>unit,Err(_)=>{tokio::time::sleep(Duration::from_millis(30)).await;continue;}};
             let state=tokio::process::Command::new("/usr/bin/systemctl").args(["--user","show",&unit,"--property=ActiveState","--value"]).output().await.unwrap();
             if String::from_utf8_lossy(&state.stdout).trim()=="active"{tokio::time::sleep(Duration::from_millis(250)).await;revoke.cancel();return;}
             tokio::time::sleep(Duration::from_millis(30)).await;

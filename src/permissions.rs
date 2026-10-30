@@ -44,6 +44,10 @@ impl Broker {
         self.grants.insert(id,Binding{digest:proposal.digest()?,proposal:proposal.clone(),epoch:self.epoch,expiry});
         Ok(Grant{id,expiry})
     }
+    pub fn approve_git(&mut self,proposal:&ToolProposal,reviewed_resources:&[String],expiry:u64,now:u64)->Result<Grant>{
+        if self.revoked.is_cancelled()||proposal.schema_version!=1||proposal.attempt==0||proposal.descriptor_digest!=crate::tools::git::DESCRIPTOR||proposal.resources!=reviewed_resources||reviewed_resources.is_empty()||expiry<=now||expiry.saturating_sub(now)>3600{return Err(Error::Denied);}
+        let id=Uuid::new_v4();self.grants.insert(id,Binding{digest:proposal.digest()?,proposal:proposal.clone(),epoch:self.epoch,expiry});Ok(Grant{id,expiry})
+    }
     #[cfg(test)]
     pub(crate) fn approve_inert(&mut self, proposal: &ToolProposal, expiry: u64) -> Result<Grant> {
         if proposal.schema_version != 1 || proposal.descriptor_digest != "test:inert:v1" { return Err(Error::Denied); }

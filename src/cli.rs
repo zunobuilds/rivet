@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 use serde_json::json;
 #[derive(Parser)]
-#[command(version, about = "Rivet P1a model-free administration")]
+#[command(version=concat!(env!("CARGO_PKG_VERSION"), " build ", env!("RIVET_BUILD_DIGEST")), about = "Rivet P1a model-free administration")]
 pub struct Cli { #[command(subcommand)] pub command: Command }
 #[derive(Subcommand)]
 pub enum Command {

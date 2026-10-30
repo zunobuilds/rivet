@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, path::{Component, Path, PathBuf}, process::Stdi
 use tokio::{io::{AsyncRead, AsyncReadExt}, process::Command};
 use tokio_util::sync::CancellationToken;
 
-pub const DESCRIPTOR: &str = "rivet:process-check:v1";
+pub const DESCRIPTOR: &str = concat!("rivet:process-check:v1:", env!("RIVET_BUILD_DIGEST"));
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProcessRequest {
@@ -46,14 +46,23 @@ fn manager(program: &str) -> Command {
     }
     command
 }
-struct OwnedUnit { name:String }
+struct OwnedUnit { name:String, description:String }
 impl OwnedUnit {
+    async fn owns(&self)->Result<bool>{
+        let output=manager("/usr/bin/systemctl").args(["--user","show",&self.name,"--property=Description","--value"]).output().await?;
+        let description=String::from_utf8_lossy(&output.stdout);
+        if description.trim()==self.description{return Ok(true);}
+        let state=manager("/usr/bin/systemctl").args(["--user","show",&self.name,"--property=LoadState","--value"]).output().await?;
+        if String::from_utf8_lossy(&state.stdout).trim()=="not-found"{Ok(false)}else{Err(Error::Denied)}
+    }
     async fn signal(&self, signal:&str) -> Result<()> {
+        if !self.owns().await?{return Ok(());}
         let status=manager("/usr/bin/systemctl").args(["--user","kill","--kill-whom=all",signal,&self.name])
             .stdout(Stdio::null()).stderr(Stdio::null()).status().await?;
         if status.success() {Ok(())} else {Err(Error::State)}
     }
     async fn stop(&self) -> Result<()> {
+        if !self.owns().await?{return Ok(());}
         // Only our UUID-named unit is affected. Unit TimeoutStopSec bounds grace.
         let result=tokio::time::timeout(Duration::from_secs(7),manager("/usr/bin/systemctl")
             .args(["--user","stop",&self.name]).stdout(Stdio::null()).stderr(Stdio::null()).status()).await;
@@ -69,6 +78,8 @@ impl OwnedUnit {
 impl Drop for OwnedUnit {
     fn drop(&mut self) {
         // Also executes on dropped dispatch futures. No broad kill/name matching.
+        let actual=std::process::Command::new("/usr/bin/systemctl").args(["--user","show",&self.name,"--property=Description","--value"]).env("SYSTEMD_BUS_TIMEOUT","2s").output();
+        if !actual.is_ok_and(|r|String::from_utf8_lossy(&r.stdout).trim()==self.description){return;}
         let _=std::process::Command::new("/usr/bin/systemctl").args(["--user","stop","--no-block",&self.name])
             .env("SYSTEMD_BUS_TIMEOUT","2s").stdout(Stdio::null()).stderr(Stdio::null()).status();
     }
@@ -111,35 +122,57 @@ impl Stage {
         Ok(stage)
     }
     fn identity(&self)->Result<(u64,u64)>{use cap_std::fs::MetadataExt;let m=self.input.dir_metadata()?;Ok((m.dev(),m.ino()))}
+    fn record_unit(&self,name:&str)->Result<()>{
+        use cap_std::fs::{OpenOptions,OpenOptionsExt};
+        let base=Self::directory(&self.parent,&self.name)?;
+        let mut options=OpenOptions::new();options.write(true).create_new(true).mode(0o600);
+        let mut file=base.open_with("unit.txt",&options)?.into_std();std::io::Write::write_all(&mut file,name.as_bytes())?;file.sync_all()?;base.into_std_file().sync_all()?;Ok(())
+    }
     fn cleanup(&self)->Result<()>{self.parent.remove_dir_all(&self.name)?;Ok(())}
 }
 impl Drop for Stage{fn drop(&mut self){let _=self.parent.remove_dir_all(&self.name);}}
 /// Invoked by the supervisor only after a committed intent. Projection files are explicit inputs.
 pub(crate) async fn perform(request:ProcessRequest, operation:crate::domain::OperationId, cancel:CancellationToken)->Result<ProcessResult> {
+    perform_inner(request,operation,cancel,None).await
+}
+#[derive(Clone,Serialize,Deserialize)]
+pub(crate) struct GitMount{pub relative:PathBuf,pub device:u64,pub inode:u64,pub writable:bool}
+pub(crate) async fn perform_git(request:ProcessRequest,operation:crate::domain::OperationId,cancel:CancellationToken,git:GitMount)->Result<ProcessResult>{
+    perform_inner(request,operation,cancel,Some(git)).await
+}
+async fn perform_inner(request:ProcessRequest,operation:crate::domain::OperationId,cancel:CancellationToken,git:Option<GitMount>)->Result<ProcessResult>{
     request.validate()?; if cancel.is_cancelled(){return Err(Error::Interrupted);}
     let root=Path::new(env!("RIVET_SOURCE_ROOT"));
     let stage=Stage::new(root,operation,&request.files)?;
     let executable=root.join(".build/target/debug/rivet");
-    let name=format!("rivet-worker-{}.service",operation.0);
-    let unit=OwnedUnit{name:name.clone()};
+    let nonce=uuid::Uuid::new_v4();
+    let name=format!("rivet-worker-{}-{}.service",operation.0.simple(),nonce.simple());
+    stage.record_unit(&name)?;
+    let unit=OwnedUnit{name:name.clone(),description:format!("Rivet operation {} owner {}",operation.0,nonce)};
     let mut command=manager("/usr/bin/systemd-run");
     command.args(["--user","--collect","--wait","--pipe","--service-type=exec","--quiet","--unit"]).arg(&name);
+    command.arg(format!("--property=Description={}",unit.description));
     command.args(["--property=Delegate=cpu memory pids","--property=CPUQuota=100%","--property=CPUQuotaPeriodSec=100ms","--property=MemoryMax=512M",
         "--property=MemorySwapMax=0","--property=TasksMax=32","--property=KillMode=control-group","--property=TimeoutStopSec=5s",
         "--property=NoNewPrivileges=yes","--property=OOMPolicy=kill"]);
     command.arg(format!("--property=RuntimeMaxSec={}ms",request.timeout_ms+7000));
     let identity=stage.identity()?;
-    command.args(["/usr/bin/env","-i","PATH=/usr/bin"]).arg(&executable).arg("__unit-launch").arg(&name).arg(identity.0.to_string()).arg(identity.1.to_string()).arg("--");
+    command.args(["/usr/bin/env","-i","PATH=/usr/bin"]).arg(&executable).arg("__unit-launch").arg(env!("RIVET_BUILD_DIGEST")).arg(&name).arg(identity.0.to_string()).arg(identity.1.to_string()).arg(git.as_ref().map(|g|serde_json::to_string(g).expect("mount serialization")).unwrap_or_else(||"-".into())).arg("--");
     command.args(["/usr/bin/bwrap","--unshare-all","--unshare-user","--disable-userns","--die-with-parent","--new-session","--cap-drop","ALL"]);
     for path in ["/usr/bin","/usr/lib","/usr/lib64","/usr/libexec","/usr/include"] {command.args(["--ro-bind",path,path]);}
     command.args(["--symlink","usr/bin","/bin","--symlink","usr/lib","/lib","--symlink","usr/lib64","/lib64",
         "--ro-bind","/usr/bin/ld.bfd","/etc/alternatives/ld","--proc","/proc","--dev","/dev"]);
     command.args(["--ro-bind-fd","__RIVET_INPUT_FD__","/work/input"]);
-    command.arg("--ro-bind").arg(&executable).arg("/rivet-worker");
+    if let Some(git)=&git{command.args([if git.writable{"--bind-fd"}else{"--ro-bind-fd"},"__RIVET_GIT_FD__","/git-metadata"]);}
+    command.args(["--ro-bind-fd","__RIVET_EXEC_FD__","/rivet-worker"]);
     command.args(["--size","67108864","--tmpfs","/work/tmp","--symlink","work/tmp","/tmp","--chdir","/work/input",
         "--clearenv","--setenv","PATH","/usr/bin","--setenv","TMPDIR","/work/tmp","--setenv","PYTHONDONTWRITEBYTECODE","1",
-        "--remount-ro","/","--","/rivet-worker","__worker-bootstrap","--"]);
-    command.arg(&request.program).args(&request.args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        "--remount-ro","/","--","/rivet-worker","__worker-bootstrap"]);
+    command.arg(env!("RIVET_BUILD_DIGEST"));
+    if let Some(git)=&git{command.arg(if git.writable{"--git-rw"}else{"--git-ro"});}
+    command.arg("--");
+    if git.is_some(){command.args(["/rivet-worker","__git-driver"]);}else{command.arg(&request.program).args(&request.args);}
+    command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let started=Instant::now(); let mut child=command.spawn()?;
     let overflow=CancellationToken::new();
     let out=tokio::spawn(drain(child.stdout.take().ok_or(Error::State)?,overflow.clone()));
@@ -165,10 +198,11 @@ pub(crate) async fn perform(request:ProcessRequest, operation:crate::domain::Ope
     Ok(ProcessResult{exit_code:status.code(),stdout,stderr,truncated:out_cut||err_cut||out_loss||err_loss,cancelled:interrupted,elapsed_ms:started.elapsed().as_millis() as u64,unit:name})
 }
 /// Single-threaded bootstrap: apply mandatory rules before any untrusted exec.
-pub fn bootstrap(args:&[String])->Result<()> {
+pub fn bootstrap(args:&[String],git:Option<bool>)->Result<()> {
     use landlock::{Access,AccessFs,AccessNet,Compatible,CompatLevel,PathBeneath,PathFd,Ruleset,RulesetAttr,RulesetCreatedAttr,RulesetStatus,Scope,ABI};
     use std::os::unix::process::CommandExt;
-    if args.is_empty() || !args[0].starts_with("/usr/bin/"){return Err(Error::Invalid);}
+    let internal=git.is_some()&&args==["/rivet-worker","__git-driver"];
+    if args.is_empty() || (!args[0].starts_with("/usr/bin/")&&!internal){return Err(Error::Invalid);}
     let descriptors=std::fs::read_dir("/proc/self/fd")?.map(|e|e.map(|e|e.path())).collect::<std::io::Result<Vec<_>>>()?;
     for path in descriptors {
         let number=path.file_name().and_then(|p|p.to_str()).and_then(|p|p.parse::<u32>().ok()).ok_or(Error::State)?;
@@ -190,6 +224,14 @@ pub fn bootstrap(args:&[String])->Result<()> {
         let rights=if path=="/dev/random"||path=="/dev/urandom"{AccessFs::ReadFile.into()}else{AccessFs::ReadFile|AccessFs::WriteFile};
         rules=rules.add_rule(PathBeneath::new(PathFd::new(path).map_err(|_|Error::State)?,rights)).map_err(|_|Error::Unsupported)?;
     }
+    if let Some(writable)=git{
+        rules=rules.add_rule(PathBeneath::new(PathFd::new("/git-metadata").map_err(|_|Error::State)?,AccessFs::ReadFile|AccessFs::ReadDir)).map_err(|_|Error::Unsupported)?;
+        rules=rules.add_rule(PathBeneath::new(PathFd::new("/rivet-worker").map_err(|_|Error::State)?,AccessFs::ReadFile|AccessFs::Execute)).map_err(|_|Error::Unsupported)?;
+        if writable{
+            let mut rights=AccessFs::from_all(abi);rights.remove(AccessFs::Execute);
+            rules=rules.add_rule(PathBeneath::new(PathFd::new("/git-metadata").map_err(|_|Error::State)?,rights)).map_err(|_|Error::Unsupported)?;
+        }
+    }
     let status=rules.restrict_self().map_err(|_|Error::Unsupported)?;
     if status.ruleset!=RulesetStatus::FullyEnforced {return Err(Error::Unsupported);}
     tracing::debug!("strict worker restrictions applied");
@@ -199,10 +241,12 @@ pub fn bootstrap(args:&[String])->Result<()> {
 }
 
 /// Trusted service entry: verify actual kernel limits before mounting/executing the worker.
-pub fn unit_launch(unit:&str, device:&str, inode:&str, args:&[String])->Result<()> {
+pub fn unit_launch(unit:&str, device:&str, inode:&str, git:&str, args:&[String])->Result<()> {
     use std::os::unix::process::CommandExt;
     let id=unit.strip_prefix("rivet-worker-").and_then(|s|s.strip_suffix(".service")).ok_or(Error::Invalid)?;
-    uuid::Uuid::parse_str(id).map_err(|_|Error::Invalid)?;
+    let (operation,nonce)=id.split_once('-').ok_or(Error::Invalid)?;
+    let id=uuid::Uuid::parse_str(operation).map_err(|_|Error::Invalid)?.to_string();
+    uuid::Uuid::parse_str(nonce).map_err(|_|Error::Invalid)?;
     if args.first().map(String::as_str)!=Some("/usr/bin/bwrap"){return Err(Error::Invalid);}
     let membership=std::fs::read_to_string("/proc/self/cgroup")?;
     let relative=membership.lines().find_map(|l|l.strip_prefix("0::")).ok_or(Error::Unsupported)?;
@@ -224,6 +268,47 @@ pub fn unit_launch(unit:&str, device:&str, inode:&str, args:&[String])->Result<(
     if args.get(position+1).map(String::as_str)!=Some("__RIVET_INPUT_FD__"){return Err(Error::Invalid);}
     args[position+1]=input.as_raw_fd().to_string();
     rustix::io::fcntl_setfd(&input,rustix::io::FdFlags::empty()).map_err(|_|Error::State)?;
+    let mut git_directory=None;let mut protected_descriptors=Vec::new();
+    if git!="-"{
+        let mount:GitMount=serde_json::from_str(git).map_err(|_|Error::Invalid)?;
+        if mount.relative.components().any(|c|!matches!(c,Component::Normal(_)))||mount.relative.file_name().and_then(|p|p.to_str())!=Some(".git"){return Err(Error::Invalid);}
+        let fd=rustix::fs::openat2(&project.dir,&mount.relative,rustix::fs::OFlags::RDONLY|rustix::fs::OFlags::DIRECTORY|rustix::fs::OFlags::CLOEXEC,rustix::fs::Mode::empty(),rustix::fs::ResolveFlags::BENEATH|rustix::fs::ResolveFlags::NO_SYMLINKS|rustix::fs::ResolveFlags::NO_XDEV).map_err(|_|Error::Denied)?;
+        let directory=cap_std::fs::Dir::from_std_file(std::fs::File::from(fd));let m=directory.dir_metadata()?;
+        if m.dev()!=mount.device||m.ino()!=mount.inode{return Err(Error::Denied);}
+        let position=args.iter().position(|a|a=="__RIVET_GIT_FD__").ok_or(Error::Invalid)?;
+        if args.get(position.wrapping_sub(1)).map(String::as_str)!=Some(if mount.writable{"--bind-fd"}else{"--ro-bind-fd"}){return Err(Error::Invalid);}
+        args[position]=directory.as_raw_fd().to_string();
+        rustix::io::fcntl_setfd(&directory,rustix::io::FdFlags::empty()).map_err(|_|Error::State)?;
+        if mount.writable{
+            let mut bindings=Vec::<String>::new();
+            let mut bind=|relative:&str,writable:bool|->Result<()>{
+                let fd=rustix::fs::openat2(&directory,relative,rustix::fs::OFlags::PATH|rustix::fs::OFlags::CLOEXEC,rustix::fs::Mode::empty(),rustix::fs::ResolveFlags::BENEATH|rustix::fs::ResolveFlags::NO_SYMLINKS|rustix::fs::ResolveFlags::NO_XDEV).map_err(|_|Error::Denied)?;
+                rustix::io::fcntl_setfd(&fd,rustix::io::FdFlags::empty()).map_err(|_|Error::State)?;
+                bindings.extend([if writable{"--bind-fd"}else{"--ro-bind-fd"}.to_owned(),fd.as_raw_fd().to_string(),format!("/git-metadata/{relative}")]);protected_descriptors.push(fd);Ok(())
+            };
+            for entry in directory.entries()?{
+                let name=entry?.file_name();let name=name.to_str().ok_or(Error::Invalid)?;
+                if ["HEAD","packed-refs","objects","refs","logs"].contains(&name)||name.ends_with(".lock"){continue;}
+                bind(name,false)?;
+            }
+            bind("refs",false)?;bind("refs/heads",true)?;
+            if directory.symlink_metadata("logs").is_ok(){
+                bind("logs",false)?;
+                let job:crate::tools::git::GitRequest=serde_json::from_slice(&project.dir.read(format!(".build/runtime/{id}/input/__rivet_git_request.json"))?).map_err(|_|Error::Invalid)?;
+                job.validate()?;
+                if let crate::tools::git::GitAction::Commit{expected_ref,..}=job.action{
+                    for path in ["logs/HEAD".to_owned(),format!("logs/{expected_ref}")]{if directory.symlink_metadata(&path).is_ok(){bind(&path,true)?;}}
+                }
+            }
+            let position=args.iter().position(|arg|arg=="--remount-ro").ok_or(Error::Invalid)?;args.splice(position..position,bindings);
+        }
+        git_directory=Some(directory);
+    }
+    let executable=rustix::fs::openat2(&project.dir,".build/target/debug/rivet",rustix::fs::OFlags::PATH|rustix::fs::OFlags::CLOEXEC,rustix::fs::Mode::empty(),rustix::fs::ResolveFlags::BENEATH|rustix::fs::ResolveFlags::NO_SYMLINKS|rustix::fs::ResolveFlags::NO_XDEV).map_err(|_|Error::Denied)?;
+    rustix::io::fcntl_setfd(&executable,rustix::io::FdFlags::empty()).map_err(|_|Error::State)?;
+    let position=args.iter().position(|arg|arg=="__RIVET_EXEC_FD__").ok_or(Error::Invalid)?;
+    args[position]=executable.as_raw_fd().to_string();
+    let _retained_git_directory=git_directory;let _protected_descriptors=protected_descriptors;
     let _error=std::process::Command::new(&args[0]).args(&args[1..]).env_clear().env("PATH","/usr/bin").exec();
     Err(Error::State)
 }

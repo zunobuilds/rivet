@@ -8,7 +8,7 @@ use std::os::unix::fs::MetadataExt as StdMetadataExt;
 use rustix::fs::{openat2, OFlags, ResolveFlags};
 use tokio_util::sync::CancellationToken;
 
-pub const DESCRIPTOR: &str = "rivet:files:v1";
+pub const DESCRIPTOR: &str = concat!("rivet:files:v1:", env!("RIVET_BUILD_DIGEST"));
 const LIMIT: usize = 64 * 1024;
 const NOFOLLOW: i32 = 0o400000;
 
@@ -139,7 +139,7 @@ impl FileWorkspace {
             _ => Err(Error::State),
         }
     }
-    fn diff(path: &Path, before: &str, after: &str) -> Result<String> {
+    pub(crate) fn diff(path: &Path, before: &str, after: &str) -> Result<String> {
         let mut diff = format!("--- a/{}\n+++ b/{}\n@@ -1,{} +1,{} @@\n", path.display(), path.display(), before.lines().count(), after.lines().count());
         for (prefix, text) in [("-", before), ("+", after)] {
             for line in text.lines() { diff.push_str(prefix); diff.push_str(line); diff.push('\n'); }
@@ -244,6 +244,32 @@ impl FileWorkspace {
 #[cfg(test)]
 mod boundary_tests {
     use super::*;
+    #[test]
+    fn racing_link_target_never_follows_outside_workspace() {
+        use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+        use std::os::unix::fs::symlink;
+        let root=tempfile::tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join(".build/tmp")).unwrap();
+        std::fs::create_dir(root.path().join("project")).unwrap();
+        std::fs::write(root.path().join("sentinel"),"preserve").unwrap();
+        let project=Project::open(&root.path().join("project")).unwrap();
+        let files=FileWorkspace::new(project,Path::new("private-state")).unwrap();
+        let running=Arc::new(AtomicBool::new(true));let control=running.clone();let path=root.path().join("project/target");
+        let writer=std::thread::spawn(move||{
+            while control.load(Ordering::Relaxed){
+                let _=std::fs::remove_file(&path);let _=symlink("../sentinel",&path);
+                let _=std::fs::remove_file(&path);let _=std::fs::write(&path,"local");
+            }
+        });
+        let stop=CancellationToken::new();
+        for _ in 0..500{
+            if let Ok(read)=files.perform(&FileAction::Read{path:"target".into()},&stop){
+                assert_ne!(read.text,"preserve");
+                let _=files.perform(&FileAction::Write{path:"target".into(),expected:read.revision,text:"authorized".into()},&stop);
+            }
+        }
+        running.store(false,Ordering::Relaxed);writer.join().unwrap();
+        assert_eq!(std::fs::read_to_string(root.path().join("sentinel")).unwrap(),"preserve");
+    }
     #[test]
     fn bind_mount_is_not_a_regular_subdirectory() {
         // Nested namespaces inherit only the already-contained developer view.

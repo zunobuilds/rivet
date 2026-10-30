@@ -43,6 +43,7 @@ impl Project {
         Ok(Self { dir, root: root.to_owned() })
     }
 
+    pub(crate) fn path(&self)->&Path {&self.root}
     pub fn relative(&self, path: &Path) -> Result<PathBuf> {
         let path = if path.is_absolute() { path.strip_prefix(&self.root).map_err(|_| Error::Invalid)? } else { path };
         if path.as_os_str().is_empty() || path.components().any(|c| !matches!(c, Component::Normal(_))) { return Err(Error::Invalid); }

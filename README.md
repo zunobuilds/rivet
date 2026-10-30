@@ -2,7 +2,7 @@
 
 Rivet is a standalone AI coding-agent platform under development. Its Rust P1a foundation provides model-free administration, local SQLite sessions, and tested permission and supervisor contracts. Coding inference and the broader platform remain planned, with useful pre-1.0 milestones leading to a mature Linux release.
 
-**Status: P1a implemented, P1b partially implemented; no coding loop or terminal execution.** Administrative commands work without a provider, model, account or network connection. A supervised file-operation library is tested in contained fixtures; it is not exposed as a CLI coding loop. An explicitly authorized user-systemd worker route now passes preliminary runtime checks; full P1b/Git acceptance remains incomplete. Later product capabilities described below remain **planned**. Format and Clippy qualification could not run because the installed toolchain lacks those commands; see the [P1a evidence](planning/research/p1a-evidence.md). No installer, release or benchmark is provided.
+**Status: P1a administration and P1b supervised tools implemented; no coding inference loop yet.** Administrative commands work without a provider, model, account or network connection. A supervised file-operation library is tested in contained fixtures; it is not exposed as a CLI coding loop. The trusted Rust API supports isolated checks through user-systemd/bubblewrap/Landlock and scoped local Git. Native fixtures verify patch/check/diff/commit and denied mutations; see [runtime evidence](planning/research/p1b-runtime.md) for the tested host and limits. Later product capabilities described below remain **planned**. Format and Clippy qualification could not run because the installed toolchain lacks those commands; see the [P1a evidence](planning/research/p1a-evidence.md). No installer, release or benchmark is provided.
 
 Rivet is intended to be free and open-source software (FOSS), but no license has been selected or included. The FOSS goal is not a present license grant.
 
@@ -28,7 +28,7 @@ Rivet is intended to be free and open-source software (FOSS), but no license has
 | --- | --- |
 | Product definition | Recorded in the [project brief](planning/RIVET_PROJECT_BRIEF.md), dated 30 October 2026. |
 | Repository guidance | [AGENTS.md](AGENTS.md) defines work boundaries; the [documentation guide](GITHUB_DOCUMENTATION_GUIDE.md) defines documentation practices. |
-| Foundation | Runnable administrative CLI, schema-v1 ledger and sessions, plus supervised file-library fixtures. No real provider or runtime terminal execution. |
+| Foundation | Runnable administrative CLI, schema-v1 ledger and sessions, plus supervised file, isolated process and local Git APIs. No real provider or CLI coding loop. |
 | Source build | Rust 1.99.1, installed GCC and bubblewrap; contained developer build route below. No installer. |
 | Testing | Deterministic offline unit/integration and build-containment checks; no broad platform qualification, CI or performance results. |
 | Licensing | Undecided; no license file is present. |

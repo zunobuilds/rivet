@@ -3,13 +3,14 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use crate::{domain::RunSpec, error::{Error, Result}, providers::{InferRequest, ProviderEvent, ProviderPort}};
 
 /// Only controller owns task lifetime; separate control does not enter the ordinary queue.
-pub struct Supervisor { stop: CancellationToken, tasks: TaskTracker, registry: crate::tools::Registry }
+pub struct Supervisor { stop: CancellationToken, tasks: TaskTracker, registry: crate::tools::Registry, git_lane:tokio::sync::Mutex<()> }
 impl Default for Supervisor {
     fn default() -> Self {
         let mut registry = crate::tools::Registry::default();
         registry.register(crate::tools::files::FileWorkspace::descriptor()).expect("built-in descriptor is valid");
         registry.register(crate::tools::process::ProcessRequest::descriptor()).expect("built-in descriptor is valid");
-        Self { stop: CancellationToken::new(), tasks: TaskTracker::new(), registry }
+        registry.register(crate::tools::git::GitRequest::descriptor()).expect("built-in descriptor is valid");
+        Self { stop: CancellationToken::new(), tasks: TaskTracker::new(), registry,git_lane:tokio::sync::Mutex::new(()) }
     }
 }
 impl Supervisor {
@@ -223,7 +224,18 @@ impl Supervisor {
             _ => None,
         };
         let stop = self.stop.child_token();
-        let effect = self.tasks.spawn_blocking(move || files.perform(&action, &stop)).await.map_err(|_| Error::State)?;
+        let worker_stop = stop.clone();
+        let ledger_stop = ledger.cancellation();
+        let revoked = broker.revocation();
+        let remaining = expiry.min(spec.deadline).saturating_sub(now);
+        let work = self.tasks.spawn_blocking(move || files.perform(&action, &worker_stop));
+        tokio::pin!(work);
+        let effect = tokio::select! { biased;
+            _ = ledger_stop.cancelled() => { stop.cancel(); work.await },
+            _ = revoked.cancelled() => { stop.cancel(); work.await },
+            _ = tokio::time::sleep(std::time::Duration::from_secs(remaining)) => { stop.cancel(); work.await },
+            result = &mut work => result,
+        }.map_err(|_| Error::State)?;
         let outcome = match &effect {
             Ok(_) => Outcome::Succeeded,
             Err(Error::State) => Outcome::Unknown,
@@ -277,5 +289,35 @@ impl Supervisor {
         ledger.transition(3,Transition::Receipt{receipt}).await?;
         if terminal{ledger.transition(4,Transition::Terminal{operation}).await?;}
         effect
+    }
+}
+
+impl Supervisor{
+    pub async fn execute_git(&self,spec:&RunSpec,ledger:&crate::ledger::Ledger,broker:&mut crate::permissions::Broker,workspace:std::sync::Arc<crate::tools::git::GitWorkspace>,proposal:crate::tools::ToolProposal,grant:crate::permissions::Grant)->Result<crate::tools::git::GitResult>{
+        use crate::{domain::{ExecutionReceipt,Outcome},ledger::Transition,tools::git::{GitRequest,DESCRIPTOR}};
+        self.admit(spec)?;self.check_cancelled()?;
+        let descriptor=self.registry.get("rivet:git",1).ok_or(Error::Unsupported)?;if descriptor.build_digest!=proposal.descriptor_digest{return Err(Error::Denied);}
+        let revoked=broker.revocation();
+        let _lane=tokio::select!{biased;_=self.stop.cancelled()=>return Err(Error::Interrupted),_=revoked.cancelled()=>return Err(Error::Denied),lane=self.git_lane.lock()=>lane};
+        let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_|Error::State)?.as_secs();
+        if proposal.descriptor_digest!=DESCRIPTOR||spec.project!=ledger.project_id()||workspace.identity()!=ledger.workspace_identity()||spec.permission_epoch!=broker.epoch()||now>=spec.deadline{return Err(Error::Denied);}
+        ledger.transition(0,Transition::Propose{run:spec.run,proposal:proposal.clone()}).await?;
+        let validation=serde_json::from_value::<GitRequest>(proposal.arguments.clone()).map_err(|_|Error::Invalid).and_then(|r|{r.validate()?;if r.resources(spec.project)!=proposal.resources{return Err(Error::Denied);}Ok(r)});
+        let request=match validation{Ok(r)=>r,Err(e)=>{ledger.transition(0,Transition::Deny{operation:proposal.operation}).await?;return Err(e);}};
+        let reference=grant.reference();let expiry=grant.expiry();
+        if let Err(e)=broker.consume(grant,&proposal,now){ledger.transition(0,Transition::Deny{operation:proposal.operation}).await?;return Err(e);}
+        let mount=workspace.mount(request.writable())?;let mut process=request.process()?;process.timeout_ms=process.timeout_ms.min(expiry.saturating_sub(now)*1000).min(spec.deadline.saturating_sub(now)*1000);
+        ledger.transition(0,Transition::Authorize{operation:proposal.operation,grant:reference,expiry,scope:proposal.digest()?,permission_epoch:broker.epoch()}).await?;
+        self.check_cancelled()?;ledger.transition(1,Transition::Intent{operation:proposal.operation}).await?;ledger.transition(2,Transition::Dispatched{operation:proposal.operation}).await?;
+        let operation=proposal.operation;let stop=self.stop.child_token();let ledger_stop=ledger.cancellation();
+        let effect=self.tasks.spawn(async move{
+            let _retained_workspace=workspace;let work=crate::tools::process::perform_git(process,operation,stop.clone(),mount);tokio::pin!(work);
+            tokio::select!{biased;_=ledger_stop.cancelled()=>{stop.cancel();work.await},_=revoked.cancelled()=>{stop.cancel();work.await},r=&mut work=>r}
+        }).await.map_err(|_|Error::State)?;
+        let result=effect.and_then(|r|{if r.cancelled||r.truncated||r.exit_code!=Some(0){
+            let phase=["symbolic-ref","rev-parse","ls-tree","ls-files","hash-object","read-tree","update-index","write-tree","commit-tree","update-ref","update-ref-packed-lock","update-ref-head-lock","update-ref-reflog","cat-file"].into_iter().find(|phase|r.stderr.lines().any(|line|line==format!("rivet-git-phase:{phase}")));
+            return Err(phase.map_or(Error::State,Error::GitPhase));}serde_json::from_str::<crate::tools::git::GitResult>(&r.stdout).map_err(|_|Error::State)});
+        let receipt=ExecutionReceipt{schema_version:1,operation,attempt:proposal.attempt,outcome:if result.is_ok(){Outcome::Succeeded}else{Outcome::Unknown},exit_code:None,error:result.as_ref().err().map(|e|e.kind().into()),artifacts:vec![],before_revision:result.as_ref().ok().and_then(|r|r.head.clone()),after_revision:result.as_ref().ok().and_then(|r|r.commit.clone()),redacted_output:result.as_ref().ok().map_or_else(String::new,|r|format!("entries={};diff_sha256={}",r.entries.len(),crate::tools::sha256(r.diff.as_bytes())))};
+        ledger.transition(3,Transition::Receipt{receipt}).await?;if result.is_ok(){ledger.transition(4,Transition::Terminal{operation}).await?;}result
     }
 }

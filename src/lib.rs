@@ -12,3 +12,5 @@ pub mod sessions;
 pub mod sandbox;
 pub mod supervisor;
 pub mod tools;
+
+mod digest;
