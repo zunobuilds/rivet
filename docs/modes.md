@@ -1,5 +1,7 @@
 # Modes and model policies
 
+For each role's responsibilities and examples, see [agent roles and modes](agent-roles.md).
+
 | Mode | Enforced composition |
 | --- | --- |
 | Solo | One Independent |

@@ -6,7 +6,7 @@ This manual describes the current source checkout. Proposed features are isolate
 2. [Quick start and Solo](solo.md)
 3. [Providers](providers.md)
 4. [Configuration](configuration.md)
-5. [Modes and model policies](modes.md)
+5. [Modes and model policies](modes.md) — [agent roles explained](agent-roles.md)
 6. [Security and permissions](security.md)
 7. [Run controls and recovery](operations.md)
 8. [Troubleshooting](troubleshooting.md)
