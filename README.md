@@ -41,6 +41,6 @@ See [verification](planning/research/post-p3-verification.md) for checks reprodu
 
 ## License
 
-Except where otherwise noted, Rivet's original source code, documentation and examples are licensed under the **GNU General Public License v3.0 only** (`GPL-3.0-only`). See [LICENSE](LICENSE) for the full terms.
+Rivet is licensed under the **GNU General Public License v3.0 only** (`GPL-3.0-only`). See [LICENSE](LICENSE) for the full terms.
 
-Third-party components retain their own licenses and notices. Rivet is provided without warranty, as described in the license.
+Third-party components retain their respective licenses. Rivet is provided without warranty, as described in the license.
