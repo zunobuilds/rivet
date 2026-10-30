@@ -2,7 +2,7 @@
 
 **Current status: P1a foundation implemented in `176bbb77`, with cleanup committed as `090f47c`. P1b tool APIs pass the patch/check/diff/commit fixture; P1c reviewed Solo coding and P1d native profiles/MCP/skills pass synthetic and native fixtures.** The owner has authorized an extended run through P3c in dependency order. This permission waives stage approval/stopping gates only for this run; installations, host changes, live inference, outside-project access and pushes remain forbidden. Completion requires actual stage evidence, not authorization alone.
 
-Current evidence: [P1a implementation](research/p1a-evidence.md) and [extended-run checkpoint/handoff](research/extended-run.md). P2a recovery and P2b bounded lifecycle are qualified; P3a hierarchies are qualified; P3b–P3c have not passed acceptance; the file-foundation history is in the extended-run handoff and the newly permitted delegation route is in [P1b runtime evidence](research/p1b-runtime.md). P0.5/P0.6 documents below remain design/history references, not implementation claims. No new push is authorized; historical user-reported pushes do not grant one.
+Current evidence: [P1a implementation](research/p1a-evidence.md) and [extended-run checkpoint/handoff](research/extended-run.md). P2a recovery and P2b bounded lifecycle are qualified; P3a hierarchies are qualified; P3b model policies are qualified; P3c has not passed acceptance; the file-foundation history is in the extended-run handoff and the newly permitted delegation route is in [P1b runtime evidence](research/p1b-runtime.md). P0.5/P0.6 documents below remain design/history references, not implementation claims. No new push is authorized; historical user-reported pushes do not grant one.
 
 The owner has replaced the mandatory 72-hour gate with the [bounded P2–P3 contract](P2_P3_QUALIFICATION.md); historical evidence below does not reinstate that gate.
 
@@ -17,9 +17,10 @@ The owner has replaced the mandatory 72-hour gate with the [bounded P2–P3 cont
 | P2a | Schema 4 durable intents/artifacts, explicit reconciliation, fenced bundle restore and bounded crash/full-storage/native-worker tests; [acceptance evidence](research/p2a-acceptance.md). |
 | P2b | Schema 5 durable deadlines/checkpoints/control/resume and explicit same-supervisor detach; [bounded lifecycle evidence](research/p2b-lifecycle.md). Optional endurance is deferred to P7. |
 | P3a | Schema 6 reviewed task graphs, exact roles, fenced scheduling, technical evidence and consented messaging; [qualification](research/p3a-hierarchies.md). |
-| P3b–P3c | Unstarted; require accepted P3a and preceding P3 steps. Approved mode cardinalities unchanged. |
+| P3b | Schema 7 model/resource policies, qualified-input concurrent streams, serial relay/explicit observations and read-only Cookbook; [evidence](research/p3b-models.md). |
+| P3c | Unstarted; Mesh/Adaptive must preserve prior gates/counts. |
 
-Current next work: implement and qualify P3b then P3c, preserving accepted P2/P3a boundaries. The owner has authorized these stages for this run; prerequisite checks still apply. The temporary user-systemd qualification route remains narrowly authorized; no installation or general outside-project access is implied.
+Current next work: implement and qualify P3c, preserving accepted P2/P3a boundaries. The owner has authorized these stages for this run; prerequisite checks still apply. The temporary user-systemd qualification route remains narrowly authorized; no installation or general outside-project access is implied.
 
 ## Implementation entry points
 

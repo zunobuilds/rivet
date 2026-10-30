@@ -18,7 +18,7 @@ pub struct Controls {pub resume:Option<(RunId,String)>,pub detached:bool,pub ext
 pub async fn run(project:&Project,state:&Path,config:ProviderConfig,options:ChatOptions,reviewer:&mut impl Reviewer,cancel:CancellationToken)->Result<ChatReport>{run_controlled(project,state,config,options,reviewer,cancel,Controls::default()).await}
 pub async fn run_controlled(project:&Project,state:&Path,config:ProviderConfig,options:ChatOptions,reviewer:&mut impl Reviewer,cancel:CancellationToken,controls:Controls)->Result<ChatReport> {
     // Endpoint validation and provider configuration cannot initiate traffic.
-    let endpoint=validate_endpoint(&config)?;
+    let endpoint=validate_endpoint(&config)?;if config.context_tokens.is_none_or(|n|n==0||n>1_000_000){return Err(Error::Unsupported);}
     if endpoint.scheme()=="https" && (options.request_cost_micros==0 || options.budget.cost_micros==0){return Err(Error::Denied);}
     if config.profile=="anthropic"&&options.credential.is_none(){return Err(Error::Denied); }
     if config.profile=="ollama"&&(config.model.ends_with(":cloud")||config.model.contains("/cloud")){return Err(Error::Denied); }

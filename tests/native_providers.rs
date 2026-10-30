@@ -15,7 +15,7 @@ async fn fixture(profile:&str,body:String)->Vec<ProviderEvent>{
         }}
         let content=if anthropic{"text/event-stream"}else{"application/x-ndjson"};stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: {content}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len()).as_bytes()).await.unwrap();for part in body.as_bytes().chunks(5){if stream.write_all(part).await.is_err(){break;}tokio::task::yield_now().await;}
     });
-    let path=if anthropic{"/v1/messages"}else{"/api/chat"};let config=ProviderConfig{profile:profile.into(),endpoint:format!("http://{address}{path}"),model:"synthetic".into()};
+    let path=if anthropic{"/v1/messages"}else{"/api/chat"};let config=ProviderConfig{profile:profile.into(),endpoint:format!("http://{address}{path}"),model:"synthetic".into(),context_tokens:Some(65536)};
     let secret=anthropic.then(||Arc::new(EphemeralSecret::new("synthetic-key".into()).unwrap()));
     let request=InferRequest{schema_version:1,id:RequestId::default(),prompt:String::new(),context:Some(RequestContext{messages:vec![ChatMessage::text(MessageRole::User,"synthetic fixture".into())],tools:vec![FileWorkspace::descriptor()],task:TaskId::default(),actor:ActorId::default(),max_output:1024,max_cost_micros:0,credential_ref:secret.as_ref().map(|s|s.reference()),reservation:"fixture".into()})};
     let broker=Broker::new(1);let permit=broker.approve_inference(&config,&request,&request.digest().unwrap(),now()+60,now()).unwrap();let provider=Native::new(config,permit,secret).unwrap();
@@ -48,7 +48,7 @@ async fn native_duplicate_calls_and_missing_stop_never_complete(){
 #[tokio::test]
 async fn credentials_and_profiles_cannot_be_swapped_under_an_inference_permit(){
     let original=Arc::new(EphemeralSecret::new("synthetic-original".into()).unwrap());let changed=Arc::new(EphemeralSecret::new("synthetic-replaced".into()).unwrap());
-    let config=ProviderConfig{profile:"anthropic".into(),endpoint:"http://127.0.0.1:1/v1/messages".into(),model:"synthetic".into()};
+    let config=ProviderConfig{profile:"anthropic".into(),endpoint:"http://127.0.0.1:1/v1/messages".into(),model:"synthetic".into(),context_tokens:Some(65536)};
     let request=InferRequest{schema_version:1,id:RequestId::default(),prompt:String::new(),context:Some(RequestContext{messages:vec![ChatMessage::text(MessageRole::User,"fixture".into())],tools:vec![],task:TaskId::default(),actor:ActorId::default(),max_output:1,max_cost_micros:0,credential_ref:Some(original.reference()),reservation:"fixture".into()})};
     let broker=Broker::new(1);let permit=broker.approve_inference(&config,&request,&request.digest().unwrap(),now()+60,now()).unwrap();let provider=Native::new(config,permit,Some(changed)).unwrap();let mut events=provider.infer(request,CancellationToken::new());assert!(matches!(events.recv().await,Some(ProviderEvent::Error{code,..}) if code=="inference-denied"));
 }

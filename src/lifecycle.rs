@@ -20,7 +20,7 @@ impl Checkpoint {
 }
 #[derive(Clone,Debug,Serialize,Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Snapshot {pub coordination_digest:Option<String>,pub task:TaskId,pub actor:ActorId,pub spec:RunSpec,pub version:u64,pub state:String,pub revision:u64,pub steps:u32,pub last_wall:u64,pub remaining_ms:u64,pub detached:bool,pub checkpoint:Checkpoint}
+pub struct Snapshot {pub model_digest:Option<String>,pub coordination_digest:Option<String>,pub task:TaskId,pub actor:ActorId,pub spec:RunSpec,pub version:u64,pub state:String,pub revision:u64,pub steps:u32,pub last_wall:u64,pub remaining_ms:u64,pub detached:bool,pub checkpoint:Checkpoint}
 impl Snapshot {pub fn digest(&self)->Result<String>{Ok(crate::tools::sha256(&serde_json::to_vec(self).map_err(|_|Error::State)?))}}
 #[derive(Clone,Debug)]
 pub enum Command {
@@ -35,7 +35,7 @@ fn number(v:u64)->Result<i64>{v.try_into().map_err(|_|Error::Invalid)}
 pub(crate) fn snapshot(db:&rusqlite::Connection,run:RunId)->Result<Snapshot>{
     let (document,version,state,revision,steps,wall,remaining_ms,detached,checkpoint):(String,i64,String,i64,u32,i64,i64,bool,String)=db.query_row("SELECT s.document,s.version,l.status,l.revision,l.steps,l.last_wall,l.remaining_ms,l.detached,l.checkpoint FROM run_lifecycle l JOIN run_specs s ON s.run_id=l.run_id WHERE l.run_id=?1 ORDER BY s.version DESC LIMIT 1",[run.0.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?)))?;
     let (task,actor):(String,String)=db.query_row("SELECT root_task,root_actor FROM run_lifecycle WHERE run_id=?1",[run.0.to_string()],|r|Ok((r.get(0)?,r.get(1)?)))?;
-    Ok(Snapshot{coordination_digest:crate::ledger::coordination_digest(db,run)?,task:TaskId(uuid::Uuid::parse_str(&task).map_err(|_|Error::State)?),actor:ActorId(uuid::Uuid::parse_str(&actor).map_err(|_|Error::State)?),spec:serde_json::from_str(&document).map_err(|_|Error::State)?,version:version.try_into().map_err(|_|Error::State)?,state,revision:revision.try_into().map_err(|_|Error::State)?,steps,last_wall:wall.try_into().map_err(|_|Error::State)?,remaining_ms:remaining_ms.try_into().map_err(|_|Error::State)?,detached,checkpoint:serde_json::from_str(&checkpoint).map_err(|_|Error::State)?})
+    Ok(Snapshot{model_digest:crate::ledger::model_digest(db,run)?,coordination_digest:crate::ledger::coordination_digest(db,run)?,task:TaskId(uuid::Uuid::parse_str(&task).map_err(|_|Error::State)?),actor:ActorId(uuid::Uuid::parse_str(&actor).map_err(|_|Error::State)?),spec:serde_json::from_str(&document).map_err(|_|Error::State)?,version:version.try_into().map_err(|_|Error::State)?,state,revision:revision.try_into().map_err(|_|Error::State)?,steps,last_wall:wall.try_into().map_err(|_|Error::State)?,remaining_ms:remaining_ms.try_into().map_err(|_|Error::State)?,detached,checkpoint:serde_json::from_str(&checkpoint).map_err(|_|Error::State)?})
 }
 pub(crate) fn uncertain(db:&rusqlite::Connection,run:RunId)->Result<bool>{
     Ok(db.query_row("SELECT EXISTS(SELECT 1 FROM operations WHERE run_id=?1 AND state NOT IN ('terminal','denied','reconciled-observed','abandoned-unknown')) OR EXISTS(SELECT 1 FROM inference_reservations i WHERE run_id=?1 AND state IN ('reserved','unknown') AND NOT EXISTS(SELECT 1 FROM recovery_resolutions x WHERE x.entity_id=i.request_id AND x.entity_kind='request' AND x.source_digest=i.request_digest))",[run.0.to_string()],|r|r.get(0))?)
@@ -79,7 +79,7 @@ fn update(tx:&Transaction<'_>,run:RunId,revision:u64,wall:u64,remaining:u64,step
     checkpoint.validate()?;let current=snapshot(tx,run)?;
     if current.revision!=revision||current.state!="active"{return Err(Error::Conflict);}
     let remaining=remaining.min(current.remaining_ms).min(current.spec.deadline.saturating_sub(wall).saturating_mul(1000));
-    let state=if wall<current.last_wall{State::Blocked}else if remaining==0{State::Expired}else if step&&current.steps>=current.spec.step_budget{State::Blocked}else if finish==Some(State::Completed)&&(uncertain(tx,run)?||!crate::ledger::coordination_done(tx,run)?){State::Blocked}else{finish.unwrap_or(State::Active)};
+    let state=if wall<current.last_wall{State::Blocked}else if remaining==0{State::Expired}else if step&&current.steps>=current.spec.step_budget{State::Blocked}else if finish==Some(State::Completed)&&(uncertain(tx,run)?||!crate::ledger::coordination_done(tx,run)?||!crate::ledger::model_done(tx,run)?){State::Blocked}else{finish.unwrap_or(State::Active)};
     let steps=current.steps+u32::from(step&&state==State::Active);
     tx.execute("UPDATE run_lifecycle SET status=?1,revision=revision+1,steps=?2,last_wall=max(last_wall,?3),remaining_ms=?4,checkpoint=?5 WHERE run_id=?6",params![state.name(),steps,number(wall)?,number(remaining)?,serde_json::to_string(&checkpoint).map_err(|_|Error::State)?,run.0.to_string()])?;
     if state!=State::Active{

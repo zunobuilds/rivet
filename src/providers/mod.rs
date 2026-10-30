@@ -73,3 +73,7 @@ pub fn validate_endpoint(config:&crate::config::ProviderConfig)->crate::error::R
         _=>Err(crate::error::Error::Unsupported),
     }
 }
+
+/// Conservative byte-based admission, never a tokenizer or performance claim.
+pub fn context_cost(request:&InferRequest)->crate::error::Result<u64>{let output=request.context.as_ref().map_or(0,|c|c.max_output as u64);(serde_json::to_vec(request).map_err(|_|crate::error::Error::Invalid)?.len() as u64).checked_mul(2).and_then(|v|v.checked_add(output+1024)).ok_or(crate::error::Error::Invalid)}
+pub fn validate_context(config:&crate::config::ProviderConfig,request:&InferRequest)->crate::error::Result<()> {let limit=config.context_tokens.ok_or(crate::error::Error::Unsupported)?;if limit==0||limit>1_000_000{return Err(crate::error::Error::Invalid);}if context_cost(request)?>limit as u64{return Err(crate::error::Error::Denied);}Ok(())}

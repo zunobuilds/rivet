@@ -109,9 +109,10 @@ impl Graph {
     fn enqueue(&mut self,id:TaskId){let parent=self.nodes.iter().find(|n|n.task.id==id).expect("known task").task.parent;if let Some(q)=self.queues.iter_mut().find(|q|q.parent==parent){if !q.ready.contains(&id){q.ready.push_back(id);}}else{self.queues.push(Queue{parent,ready:VecDeque::from([id])});}}
     fn children_done(&self,id:TaskId)->bool{self.nodes.iter().filter(|n|n.task.parent==Some(id)&&n.task.required).all(|n|n.state==Status::Succeeded&&n.stale.is_empty())}
     pub fn refresh(&mut self){let ready=self.nodes.iter().filter(|n|(n.state==Status::Pending&&n.task.dependencies.iter().all(|d|self.node(*d).is_ok_and(|d|d.state==Status::Succeeded)))||(n.state==Status::WaitingChildren&&self.children_done(n.task.id))).map(|n|n.task.id).collect::<Vec<_>>();for id in ready{let i=self.index(id).expect("known");self.nodes[i].state=Status::Ready;self.enqueue(id);}}
-    pub fn next(&self,now:u64)->Option<TaskId>{
+    pub fn next(&self,now:u64)->Option<TaskId>{self.next_eligible(now, |_|true)}
+    pub fn next_eligible(&self,now:u64,eligible:impl Fn(TaskId)->bool)->Option<TaskId>{
         for offset in 0..self.queues.len(){let queue=&self.queues[(self.cursor+offset)%self.queues.len()];let Some(id)=queue.ready.front()else{continue;};let node=self.node(*id).ok()?;
-            if node.state!=Status::Ready||node.lease.as_ref().is_some_and(|l|l.expires<=now){continue;}
+            if !eligible(*id)||node.state!=Status::Ready||node.lease.as_ref().is_some_and(|l|l.expires<=now){continue;}
             if self.nodes.iter().filter(|other|other.task.id!=*id&&other.lease.is_some()).any(|other|node.task.writes.iter().any(|a|other.task.writes.iter().any(|b|overlap(a,b)))){continue;}
             return Some(*id);
         }None

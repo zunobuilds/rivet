@@ -17,8 +17,9 @@ pub enum Action {Status,Pause,Stop,Disconnect,Approve{challenge:String},Forward{
 struct Wire {run:RunId,nonce:uuid::Uuid,command:Action}
 struct PendingReview {challenge:String,review:Review,reply:oneshot::Sender<bool>}
 #[derive(Clone)]
-pub struct Handle {pub cancel:CancellationToken,reason:Arc<AtomicU8>,pending:Arc<Mutex<Option<PendingReview>>>,pub snapshot:Arc<Mutex<Snapshot>>,forward:Arc<Mutex<std::collections::VecDeque<Forward>>>,graph:Arc<Mutex<Option<crate::scheduler::Graph>>>}
+pub struct Handle {pub cancel:CancellationToken,reason:Arc<AtomicU8>,pending:Arc<Mutex<Option<PendingReview>>>,pub snapshot:Arc<Mutex<Snapshot>>,forward:Arc<Mutex<std::collections::VecDeque<Forward>>>,graph:Arc<Mutex<Option<crate::scheduler::Graph>>>,model:Arc<Mutex<Option<crate::model_pool::State>>>}
 impl Handle {
+    pub fn update_model(&self,model:Option<crate::model_pool::State>)->Result<()>{*self.model.lock().map_err(|_|Error::State)?=model;Ok(())}
     pub fn update_graph(&self,graph:crate::scheduler::Graph)->Result<()>{*self.graph.lock().map_err(|_|Error::State)?=Some(graph);Ok(())}
     pub fn take_forward(&self)->Result<Option<Forward>>{Ok(self.forward.lock().map_err(|_|Error::State)?.pop_front())}
     pub fn reason(&self)->u8{self.reason.load(Ordering::SeqCst)}
@@ -39,7 +40,7 @@ impl Plane {
         let socket=format!("/proc/self/fd/{}/control.sock",dir.as_raw_fd());let listener=UnixListener::bind(&socket)?;dir.set_permissions("control.sock",Permissions::from_mode(0o600))?;
         let inode=dir.symlink_metadata("control.sock")?.ino();
         let endpoint=Endpoint{version:1,run:snapshot.spec.run,epoch:ledger.epoch(),nonce:uuid::Uuid::new_v4()};storage::json(&dir,"control.json",&endpoint,false)?;
-        let handle=Handle{cancel:CancellationToken::new(),reason:Arc::new(AtomicU8::new(0)),pending:Arc::new(Mutex::new(None)),snapshot:Arc::new(Mutex::new(snapshot)),forward:Arc::new(Mutex::new(std::collections::VecDeque::new())),graph:Arc::new(Mutex::new(None))};
+        let handle=Handle{cancel:CancellationToken::new(),reason:Arc::new(AtomicU8::new(0)),pending:Arc::new(Mutex::new(None)),snapshot:Arc::new(Mutex::new(snapshot)),forward:Arc::new(Mutex::new(std::collections::VecDeque::new())),graph:Arc::new(Mutex::new(None)),model:Arc::new(Mutex::new(None))};
         let state=handle.clone();let expected=endpoint.clone();
         let worker=tokio::spawn(async move{
             // Sequential, bounded requests; a slow client cannot occupy the channel beyond 100 ms.
@@ -76,7 +77,7 @@ fn respond(handle:&Handle,command:Action)->Result<serde_json::Value>{
         },
         Action::Status=>{
             let snapshot=handle.snapshot.lock().map_err(|_|Error::State)?.clone();let review=handle.pending.lock().map_err(|_|Error::State)?.as_ref().map(|p|serde_json::json!({"challenge":p.challenge,"review":p.review}));
-            Ok(serde_json::json!({"snapshot":snapshot,"review":review,"cancellation_requested":handle.cancel.is_cancelled(),"control_reason":handle.reason(),"coordination":handle.graph.lock().map_err(|_|Error::State)?.clone(),"queued_forwarding":handle.forward.lock().map_err(|_|Error::State)?.len()}))
+            Ok(serde_json::json!({"snapshot":snapshot,"review":review,"cancellation_requested":handle.cancel.is_cancelled(),"control_reason":handle.reason(),"coordination":handle.graph.lock().map_err(|_|Error::State)?.clone(),"model_pool":handle.model.lock().map_err(|_|Error::State)?.clone(),"queued_forwarding":handle.forward.lock().map_err(|_|Error::State)?.len()}))
         },
         Action::Disconnect if handle.snapshot.lock().map_err(|_|Error::State)?.detached=>Ok(serde_json::json!({"detached":true,"paused":false,"new_permissions":false})),
         Action::Pause|Action::Stop|Action::Disconnect=>{

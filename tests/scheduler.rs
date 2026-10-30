@@ -42,7 +42,7 @@ async fn ledger_claims_transport_dedup_consent_revocation_and_atomic_ack(){
     let current=ledger.lifecycle(run).await.unwrap();ledger.life(current.revision,lifecycle::Command::Finish{run,state:lifecycle::State::Paused,wall:now(),remaining_ms:current.remaining_ms,checkpoint:current.checkpoint}).await.unwrap();let current=ledger.lifecycle(run).await.unwrap();ledger.life(current.revision,lifecycle::Command::Resume{run,wall:now(),approved:current.digest().unwrap(),detached:false}).await.unwrap();assert!(!ledger.inbox(run,code.actor).await.unwrap()[0].permitted);
     let graph=ledger.graph(run).await.unwrap();assert!(ledger.coordinate(graph.revision,Command::Ack{run,id:message.id,recipient:code.actor,context:code_claim.clone(),completion:None,now:now()}).await.is_err());ledger.coordinate(graph.revision,Command::Withhold{run,id:message.id,recipient:code.actor}).await.unwrap();assert!(ledger.inbox(run,code.actor).await.unwrap().is_empty());
     // A role/claim is not a grant and a revoked permission epoch cannot reserve inference.
-    assert!(ledger.transition(0,Transition::ReserveTaskInference{run,request:RequestId::default(),tokens:1,cost:0,digest:"b".repeat(64),permission_epoch:spec.permission_epoch,claim:code_claim}).await.is_err());ledger.shutdown().unwrap();
+    assert!(ledger.transition(0,Transition::ReserveTaskInference{run,request:RequestId::default(),tokens:1,cost:0,digest:"b".repeat(64),permission_epoch:spec.permission_epoch,claim:code_claim,pool:None}).await.is_err());ledger.shutdown().unwrap();
 }
 
 #[tokio::test]

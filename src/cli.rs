@@ -7,6 +7,8 @@ use serde_json::json;
 pub struct Cli { #[command(subcommand)] pub command: Command }
 #[derive(Subcommand)]
 pub enum Command {
+    /// Rank explicit whole-hierarchy allocations from a qualified read-only llmfit export.
+    Cookbook{#[arg(long)]input:PathBuf,#[arg(long)]version:String,#[arg(long)]plan:PathBuf,#[arg(long)]allocations:PathBuf,#[arg(long,value_enum,default_value="balanced")]preference:PreferenceArg},
     /// Inspect recovery evidence or create an exact-snapshot consistent backup.
     Repair {#[command(subcommand)] command:RepairCommand},
     /// Durable status, controls, exact review approval and explicit bounded continuation.
@@ -24,9 +26,10 @@ pub enum Command {
 }
 #[derive(Subcommand)]
 pub enum RunCommand {
+    Pool{run:uuid::Uuid,#[arg(long)]state_dir:Option<PathBuf>,#[arg(long)]observation:Option<PathBuf>,#[arg(long)]approve:Option<String>},
     Forward{run:uuid::Uuid,#[arg(long)]recipient:uuid::Uuid,#[arg(long)]scope:String,#[arg(long)]decision:String,#[arg(long)]approve:Option<String>,#[arg(long)]state_dir:Option<PathBuf>},
     Template{#[arg(long)]mode:ModeArg,#[arg(long)]task:String,#[arg(long)]paths:Vec<PathBuf>,#[arg(long)]minimal:bool},
-    Hierarchy{#[arg(long)]plan:PathBuf,#[arg(long)]approve:Option<String>,#[arg(long)]config:Option<PathBuf>,#[arg(long)]state_dir:Option<PathBuf>,#[arg(long,default_value_t=100)]steps:u32,#[arg(long,default_value_t=3600)]deadline_seconds:u64,#[arg(long,default_value_t=65536)]token_budget:u64,#[arg(long,default_value_t=0)]spend_ceiling_micros:u64,#[arg(long,default_value_t=0)]request_cost_micros:u64,#[arg(long)]ephemeral_key_stdin:bool,#[arg(long)]detach:bool,#[arg(long,hide=true)]detached_core:bool,#[arg(long)]minimal:bool},
+    Hierarchy{#[arg(long)]plan:PathBuf,#[arg(long)]execution:Option<PathBuf>,#[arg(long)]approve:Option<String>,#[arg(long)]config:Option<PathBuf>,#[arg(long)]state_dir:Option<PathBuf>,#[arg(long,default_value_t=100)]steps:u32,#[arg(long,default_value_t=3600)]deadline_seconds:u64,#[arg(long,default_value_t=65536)]token_budget:u64,#[arg(long,default_value_t=0)]spend_ceiling_micros:u64,#[arg(long,default_value_t=0)]request_cost_micros:u64,#[arg(long)]ephemeral_key_stdin:bool,#[arg(long)]detach:bool,#[arg(long,hide=true)]detached_core:bool,#[arg(long)]minimal:bool},
     Status{run:uuid::Uuid,#[arg(long)]state_dir:Option<PathBuf>},
     Pause{run:uuid::Uuid,#[arg(long)]state_dir:Option<PathBuf>},
     Stop{run:uuid::Uuid,#[arg(long)]state_dir:Option<PathBuf>},
@@ -34,6 +37,8 @@ pub enum RunCommand {
     Approve{run:uuid::Uuid,challenge:String,#[arg(long)]state_dir:Option<PathBuf>},
     Resume{run:uuid::Uuid,#[arg(long)]state_dir:Option<PathBuf>,#[arg(long)]config:Option<PathBuf>,#[arg(long)]approve:Option<String>,#[arg(long,default_value_t=0)]request_cost_micros:u64,#[arg(long)]ephemeral_key_stdin:bool,#[arg(long)]detach:bool,#[arg(long,hide=true)]detached_core:bool},
 }
+#[derive(Clone,clap::ValueEnum)]
+pub enum PreferenceArg {Efficient,Balanced,Ambitious}
 #[derive(Clone,clap::ValueEnum)]
 pub enum ModeArg {Solo,Pair,Crew,Fleet}
 impl ModeArg{fn mode(&self)->crate::domain::Mode{match self{Self::Solo=>crate::domain::Mode::Solo,Self::Pair=>crate::domain::Mode::Pair,Self::Crew=>crate::domain::Mode::Crew,Self::Fleet=>crate::domain::Mode::Fleet}}}
@@ -66,21 +71,25 @@ fn output(value: serde_json::Value, structured: bool) {
 pub async fn execute(cli: Cli, project: &Project) -> Result<()> {execute_controlled(cli,project,tokio_util::sync::CancellationToken::new()).await}
 pub async fn execute_controlled(cli:Cli,project:&Project,cancel:tokio_util::sync::CancellationToken)->Result<()> {
     match cli.command {
+        Command::Cookbook{input,version,plan,allocations,preference}=>{
+            let input=crate::cookbook::import(&version,&project.input(&input)?)?;let plan:crate::scheduler::Plan=serde_json::from_slice(&project.input(&plan)?).map_err(|_|crate::error::Error::Invalid)?;plan.validate()?;let allocations:Vec<crate::model_pool::Policy>=serde_json::from_slice(&project.input(&allocations)?).map_err(|_|crate::error::Error::Invalid)?;let preference=match preference{PreferenceArg::Efficient=>crate::cookbook::Preference::Efficient,PreferenceArg::Balanced=>crate::cookbook::Preference::Balanced,PreferenceArg::Ambitious=>crate::cookbook::Preference::Ambitious};output(json!({"source":input,"recommendations":crate::cookbook::rank(&input,&allocations,plan.agents.len(),plan.tasks.len(),preference)?,"executed":false}),true);
+        },
         Command::Run{command}=>{
             use crate::ledger::control::{self,Action};use crate::domain::RunId;
             match command{
+                RunCommand::Pool{run,state_dir,observation,approve}=>{let run=RunId(run);if let Some(path)=observation{let observation=serde_json::from_slice(&project.input(&path)?).map_err(|_|crate::error::Error::Invalid)?;output(crate::model_pool::observe(project,state(&state_dir),run,observation,approve.as_deref()).await?,true);}else{match crate::ledger::model_inspect(project,state(&state_dir),run){Ok(value)=>output(json!({"model_pool":value}),true),Err(crate::error::Error::Busy)=>output(control::request(project,state(&state_dir),run,Action::Status).await?,true),Err(e)=>return Err(e)}}},
                 RunCommand::Forward{run,recipient,scope,decision,approve,state_dir}=>{
                     let run=RunId(run);let recipient=crate::domain::ActorId(recipient);let status=control::request(project,state(&state_dir),run,Action::Status).await?;let epoch=status["snapshot"]["spec"]["permission_epoch"].as_u64().ok_or(crate::error::Error::State)?;let digest=control::forward_digest(run,recipient,&scope,&decision,epoch)?;
                     if let Some(approved)=approve{if approved!=digest{return Err(crate::error::Error::Denied);}output(control::request(project,state(&state_dir),run,Action::Forward{recipient,scope,text:decision,epoch,approved}).await?,true);}else{output(json!({"run":run,"recipient":recipient,"scope":scope,"decision":decision,"epoch":epoch,"review_digest":digest,"forwarded":false}),true);}
                 },
                 RunCommand::Template{mode,task,paths,minimal}=>{let plan=crate::scheduler::template(mode.mode(),&task,paths)?;crate::domain::validate_roles(&plan.mode,&plan.agents.iter().map(|a|a.role.clone()).collect::<Vec<_>>(),minimal)?;output(serde_json::to_value(plan).map_err(|_|crate::error::Error::State)?,true);},
-                RunCommand::Hierarchy{plan,approve,config,state_dir,steps,deadline_seconds,token_budget,spend_ceiling_micros,request_cost_micros,ephemeral_key_stdin,detach,detached_core,minimal}=>{
+                RunCommand::Hierarchy{plan,execution,approve,config,state_dir,steps,deadline_seconds,token_budget,spend_ceiling_micros,request_cost_micros,ephemeral_key_stdin,detach,detached_core,minimal}=>{
                     if detached_core{control::verify_detached()?;}
-                    let plan:crate::scheduler::Plan=serde_json::from_slice(&project.input(&plan)?).map_err(|_|crate::error::Error::Invalid)?;plan.validate()?;crate::domain::validate_roles(&plan.mode,&plan.agents.iter().map(|a|a.role.clone()).collect::<Vec<_>>(),minimal)?;let digest=crate::hierarchy::plan_digest(&plan)?;
-                    let Some(approve)=approve else{output(json!({"plan":plan,"review_digest":digest,"executed":false}),true);return Ok(());};if approve!=digest{return Err(crate::error::Error::Denied);}
+                    let plan:crate::scheduler::Plan=serde_json::from_slice(&project.input(&plan)?).map_err(|_|crate::error::Error::Invalid)?;plan.validate()?;crate::domain::validate_roles(&plan.mode,&plan.agents.iter().map(|a|a.role.clone()).collect::<Vec<_>>(),minimal)?;let execution:Option<crate::model_pool::Policy>=execution.as_ref().map(|p|project.input(p).and_then(|v|serde_json::from_slice(&v).map_err(|_|crate::error::Error::Invalid))).transpose()?;if let Some(policy)=&execution{policy.validate(plan.agents.len(),plan.tasks.len())?;}let digest=crate::hierarchy::admission_digest(&plan,execution.as_ref())?;
+                    let Some(approve)=approve else{output(json!({"plan":plan,"execution":execution,"review_digest":digest,"executed":false}),true);return Ok(());};if approve!=digest{return Err(crate::error::Error::Denied);}
                     if detach&&!detached_core{let arguments=std::env::args().skip(1).collect::<Vec<_>>();output(control::detach(project,state(&state_dir),&arguments).await?,true);return Ok(());}
-                    let configuration=project.config(config.as_deref())?;let provider=configuration.provider.ok_or(crate::error::Error::Unsupported)?;if ephemeral_key_stdin&&provider.profile!="anthropic"{return Err(crate::error::Error::Invalid);}let credential=if ephemeral_key_stdin{Some(crate::terminal::read_secret().await?)}else{None};let mut terminal=crate::terminal::Terminal::new();
-                    let report=crate::hierarchy::run_controlled(project,state(&state_dir),provider,crate::chat::ChatOptions{session:None,task:plan.root().description.clone(),steps,deadline_seconds,budget:crate::budget::BudgetLimits{tokens:token_budget,requests:steps,cost_micros:spend_ceiling_micros},request_cost_micros,credential,mcp:configuration.mcp,skills:configuration.skills},Some(plan),Some(approve),&mut terminal,cancel,crate::chat::Controls{resume:None,detached:detach,external_reviews:detached_core}).await?;output(serde_json::to_value(report).map_err(|_|crate::error::Error::State)?,true);
+                    let configuration=project.config(config.as_deref())?;let provider=execution.as_ref().and_then(|p|p.profiles.first()).map(|p|p.provider.clone()).or(configuration.provider).ok_or(crate::error::Error::Unsupported)?;if ephemeral_key_stdin&&provider.profile!="anthropic"{return Err(crate::error::Error::Invalid);}let credential=if ephemeral_key_stdin{Some(crate::terminal::read_secret().await?)}else{None};let mut terminal=crate::terminal::Terminal::new();
+                    let report=crate::hierarchy::run_configured(project,state(&state_dir),provider,crate::chat::ChatOptions{session:None,task:plan.root().description.clone(),steps,deadline_seconds,budget:crate::budget::BudgetLimits{tokens:token_budget,requests:steps,cost_micros:spend_ceiling_micros},request_cost_micros,credential,mcp:configuration.mcp,skills:configuration.skills},Some(plan),Some(approve),execution,&mut terminal,cancel,crate::chat::Controls{resume:None,detached:detach,external_reviews:detached_core}).await?;output(serde_json::to_value(report).map_err(|_|crate::error::Error::State)?,true);
                 },
                 RunCommand::Status{run,state_dir}=>{
                     let run=RunId(run);match crate::lifecycle::inspect(project,state(&state_dir),run){Ok(snapshot)=>{let graph=if snapshot.coordination_digest.is_some(){Some(crate::ledger::graph_inspect(project,state(&state_dir),run)?)}else{None};output(json!({"snapshot":snapshot,"coordination":graph,"resume_digest":snapshot.digest()?}),true)},Err(crate::error::Error::Busy)=>output(control::request(project,state(&state_dir),run,Action::Status).await?,true),Err(error)=>return Err(error)}

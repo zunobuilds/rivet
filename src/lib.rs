@@ -33,3 +33,7 @@ pub mod coordination;
 mod agent;
 
 pub mod hierarchy;
+
+pub mod model_pool;
+
+pub mod cookbook;

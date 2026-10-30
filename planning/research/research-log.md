@@ -118,3 +118,8 @@ See [P2a acceptance](p2a-acceptance.md): schema 4, asset bundles, restartable di
 ## 30 October 2026 — P3a explicit hierarchies
 
 [P3a evidence](p3a-hierarchies.md) records schema 6, exact roles, a shared durable graph/claims/writer leases, consented messaging/atomic acknowledgment, separate contexts and artifact-bound technical review. Thousand-quantum fairness and actual synthetic Pair/Crew/Fleet checked workflows passed, including reviewer rejection and a preserved human edit. P3b/P3c remain next; no dependency changes or push.
+
+
+## 30 October 2026 — P3b model/resource policies
+
+[P3b evidence](p3b-models.md) records schema 7 atomic instance/KV/budget reservations, actual concurrent synthetic HTTP streams, serial relay/evidence handoffs and explicit owner-observed activation/resource completion, plus bounded read-only llmfit 1.1.17 whole-hierarchy ranking. Two source-only registry archives were checksum-verified; no binaries/models or Cargo dependency changes. Known context ceilings are now enforced. P3c remains next.

@@ -35,7 +35,7 @@ async fn server(body:String,status:u16)->(ProviderConfig,tokio::task::JoinHandle
         let headers=format!("HTTP/1.1 {status} Fixture\r\nContent-Type: text/event-stream\r\nLocation: http://127.0.0.1:1/forbidden\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len());
         if stream.write_all(headers.as_bytes()).await.is_ok(){for bytes in body.as_bytes().chunks(7){if stream.write_all(bytes).await.is_err(){break;}tokio::task::yield_now().await;}}
     });
-    (ProviderConfig{profile:"llama.cpp-compatible".into(),endpoint:format!("http://{address}/v1/chat/completions"),model:"synthetic".into()},task,calls)
+    (ProviderConfig{profile:"llama.cpp-compatible".into(),endpoint:format!("http://{address}/v1/chat/completions"),model:"synthetic".into(),context_tokens:Some(65536)},task,calls)
 }
 async fn collect(body:String,status:u16)->Vec<ProviderEvent>{
     let (config,server,count)=server(body,status).await;let broker=Broker::new(1);let request=request();
@@ -66,7 +66,7 @@ async fn duplicate_malformed_eof_quota_and_redirect_never_emit_calls_or_retry(){
 }
 #[tokio::test]
 async fn grants_bind_request_and_are_single_use_and_revocable(){
-    let config=ProviderConfig{profile:"llama.cpp-compatible".into(),endpoint:"http://127.0.0.1:1/v1/chat/completions".into(),model:"synthetic".into()};
+    let config=ProviderConfig{profile:"llama.cpp-compatible".into(),endpoint:"http://127.0.0.1:1/v1/chat/completions".into(),model:"synthetic".into(),context_tokens:Some(65536)};
     let broker=Broker::new(1);let request=request();let permit=broker.approve_inference(&config,&request,&request.digest().unwrap(),now()+30,now()).unwrap();
     broker.revocation().cancel();let provider=Compatible::new(config,permit).unwrap();
     for _ in 0..2 {let mut rx=provider.infer(request.clone(),CancellationToken::new());assert!(matches!(rx.recv().await,Some(ProviderEvent::Error{code,..}) if code=="inference-denied"));assert!(rx.recv().await.is_none());}
@@ -85,7 +85,7 @@ fn endpoints_reject_plaintext_remote_credentials_redirect_targets_and_zero_remot
     use rivet::providers::compatible::endpoint;
     for value in ["http://example.invalid/v1/chat/completions","file:///v1/chat/completions","http://user:pass@127.0.0.1:1234/v1/chat/completions","http://127.0.0.1:1234/v1/chat/completions?key=hidden","http://127.0.0.1:1234/other"]{assert!(endpoint(value).is_err());}
     assert!(endpoint("https://example.invalid/v1/chat/completions").is_ok());assert!(endpoint("http://[::1]:1234/v1/chat/completions").is_ok());
-    let config=ProviderConfig{profile:"llama.cpp-compatible".into(),endpoint:"https://example.invalid/v1/chat/completions".into(),model:"synthetic".into()};let broker=Broker::new(1);let mut r=request();
+    let config=ProviderConfig{profile:"llama.cpp-compatible".into(),endpoint:"https://example.invalid/v1/chat/completions".into(),model:"synthetic".into(),context_tokens:Some(65536)};let broker=Broker::new(1);let mut r=request();
     assert!(broker.approve_inference(&config,&r,&r.digest().unwrap(),now()+30,now()).is_err());r.context.as_mut().unwrap().max_cost_micros=100;
     assert!(broker.approve_inference(&config,&r,&r.digest().unwrap(),now()+30,now()).is_ok()); // No connection is made.
 }
@@ -93,6 +93,11 @@ fn endpoints_reject_plaintext_remote_credentials_redirect_targets_and_zero_remot
 async fn cancellation_after_send_reports_uncertainty_without_completed_proposal(){
     let socket=TcpListener::bind("127.0.0.1:0").await.unwrap();let address=socket.local_addr().unwrap();let (started,seen)=tokio::sync::oneshot::channel();
     let server=tokio::spawn(async move{let (mut stream,_)=socket.accept().await.unwrap();let mut buffer=[0;4096];assert!(stream.read(&mut buffer).await.unwrap()>0);started.send(()).unwrap();tokio::time::sleep(Duration::from_millis(100)).await;});
-    let config=ProviderConfig{profile:"llama.cpp-compatible".into(),endpoint:format!("http://{address}/v1/chat/completions"),model:"synthetic".into()};let broker=Broker::new(1);let request=request();let permit=broker.approve_inference(&config,&request,&request.digest().unwrap(),now()+30,now()).unwrap();let provider=Compatible::new(config,permit).unwrap();let cancel=CancellationToken::new();let mut events=provider.infer(request,cancel.clone());seen.await.unwrap();cancel.cancel();
+    let config=ProviderConfig{profile:"llama.cpp-compatible".into(),endpoint:format!("http://{address}/v1/chat/completions"),model:"synthetic".into(),context_tokens:Some(65536)};let broker=Broker::new(1);let request=request();let permit=broker.approve_inference(&config,&request,&request.digest().unwrap(),now()+30,now()).unwrap();let provider=Compatible::new(config,permit).unwrap();let cancel=CancellationToken::new();let mut events=provider.infer(request,cancel.clone());seen.await.unwrap();cancel.cancel();
     assert!(matches!(events.recv().await,Some(ProviderEvent::Error{code,..}) if code=="cancelled-outcome-unknown"));assert!(events.recv().await.is_none());server.await.unwrap();
+}
+
+#[test]
+fn unknown_or_insufficient_context_cannot_authorize_inference(){
+    let mut config=ProviderConfig{profile:"llama.cpp-compatible".into(),endpoint:"http://127.0.0.1:1/v1/chat/completions".into(),model:"synthetic".into(),context_tokens:None};let broker=Broker::new(1);let request=request();assert!(broker.approve_inference(&config,&request,&request.digest().unwrap(),now()+30,now()).is_err());config.context_tokens=Some(1);assert!(broker.approve_inference(&config,&request,&request.digest().unwrap(),now()+30,now()).is_err());
 }

@@ -5,7 +5,7 @@ use std::{path::{Component, Path, PathBuf}};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct ProviderConfig { pub profile: String, pub endpoint: String, pub model: String }
+pub struct ProviderConfig { pub profile: String, pub endpoint: String, pub model: String, #[serde(default)] pub context_tokens:Option<u32> }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
