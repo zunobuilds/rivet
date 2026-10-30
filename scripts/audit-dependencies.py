@@ -34,7 +34,8 @@ print('Declared license expressions:')
 for license_expression in sorted(licenses):
     print(' ', license_expression)
 print('Direct resolved dependencies:')
-for d in packages[('rivet','0.1.0')]['dependencies']:
+project_version = tomllib.loads((root / 'Cargo.toml').read_text())['package']['version']
+for d in packages[('rivet', project_version)]['dependencies']:
     candidates = [p for p in metadata['packages'] if p['name'] == d['name']]
     assert len(candidates) == 1
     p = candidates[0]

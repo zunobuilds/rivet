@@ -29,4 +29,4 @@ Example ordering: `0.1.0-alpha.1 < 0.1.0-alpha.2 < 0.1.0-beta.1 < 0.1.0-rc.1 < 0
 
 Use package version `0.1.0-alpha.1`, Git tag `v0.1.0-alpha.1` and release title `Rivet v0.1.0-alpha.1`. The `v` belongs to the tag/title, not Cargo's version. Cargo.toml, the root Cargo.lock entry, rebuilt CLI output and release notes must agree before publication. Reserve one immutable source commit per released version.
 
-GitHub draft status controls publication; its pre-release flag labels the release. Both are separate from the SemVer suffix. The current task permits preparation and a draft only, not tags, pushes or publication. See [release readiness](release-readiness.md).
+GitHub draft status controls publication; its pre-release flag labels the release. Both are separate from the SemVer suffix. Tag creation, pushes and publication each require explicit authorization. See [release readiness](release-readiness.md) for the published alpha’s version discrepancy and correction plan.
