@@ -2,7 +2,7 @@
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::{Component, Path, PathBuf}, process::Stdio, time::{Duration, Instant}};
-use tokio::{io::{AsyncRead, AsyncReadExt}, process::Command};
+use tokio::{io::{AsyncRead, AsyncReadExt, AsyncWriteExt}, process::Command};
 use tokio_util::sync::CancellationToken;
 
 pub const DESCRIPTOR: &str = concat!("rivet:process-check:v1:", env!("RIVET_BUILD_DIGEST"));
@@ -132,25 +132,44 @@ impl Stage {
 }
 impl Drop for Stage{fn drop(&mut self){let _=self.parent.remove_dir_all(&self.name);}}
 /// Invoked by the supervisor only after a committed intent. Projection files are explicit inputs.
-pub(crate) async fn perform(request:ProcessRequest, operation:crate::domain::OperationId, cancel:CancellationToken)->Result<ProcessResult> {
-    perform_inner(request,operation,cancel,None,false).await
+pub(crate) async fn perform(request:ProcessRequest, operation:crate::domain::OperationId, cancel:CancellationToken,ledger:crate::ledger::LedgerPort,revoked:CancellationToken)->Result<ProcessResult> {
+    perform_inner(request,operation,cancel,None,false,ledger,revoked).await
 }
 #[derive(Clone,Serialize,Deserialize)]
 pub(crate) struct GitMount{pub relative:PathBuf,pub device:u64,pub inode:u64,pub writable:bool}
-pub(crate) async fn perform_git(request:ProcessRequest,operation:crate::domain::OperationId,cancel:CancellationToken,git:GitMount)->Result<ProcessResult>{
-    perform_inner(request,operation,cancel,Some(git),false).await
+pub(crate) async fn perform_git(request:ProcessRequest,operation:crate::domain::OperationId,cancel:CancellationToken,git:GitMount,ledger:crate::ledger::LedgerPort,revoked:CancellationToken)->Result<ProcessResult>{
+    perform_inner(request,operation,cancel,Some(git),false,ledger,revoked).await
 }
-pub(crate) async fn perform_mcp(request:ProcessRequest,operation:crate::domain::OperationId,cancel:CancellationToken)->Result<ProcessResult>{perform_inner(request,operation,cancel,None,true).await}
-async fn perform_inner(request:ProcessRequest,operation:crate::domain::OperationId,cancel:CancellationToken,git:Option<GitMount>,mcp:bool)->Result<ProcessResult>{
+pub(crate) async fn perform_mcp(request:ProcessRequest,operation:crate::domain::OperationId,cancel:CancellationToken,ledger:crate::ledger::LedgerPort,revoked:CancellationToken)->Result<ProcessResult>{perform_inner(request,operation,cancel,None,true,ledger,revoked).await}
+async fn perform_inner(request:ProcessRequest,operation:crate::domain::OperationId,cancel:CancellationToken,git:Option<GitMount>,mcp:bool,ledger:crate::ledger::LedgerPort,revoked:CancellationToken)->Result<ProcessResult>{
     request.validate()?; if cancel.is_cancelled(){return Err(Error::Interrupted);}
     let projection_digest=crate::tools::sha256(&serde_json::to_vec(&request.files).map_err(|_|Error::Invalid)?);
     let root=Path::new(env!("RIVET_SOURCE_ROOT"));
     let stage=Stage::new(root,operation,&request.files)?;
     let executable=root.join(".build/target/debug/rivet");
+    let owner=ledger.owner_scope()?;
+    use std::os::fd::AsRawFd;
+    let base=Stage::directory(&stage.parent,&stage.name)?;
+    let listener=tokio::net::UnixListener::bind(format!("/proc/self/fd/{}/control.sock",base.as_raw_fd()))?;
+
     let nonce=uuid::Uuid::new_v4();
     let name=format!("rivet-worker-{}-{}.service",operation.0.simple(),nonce.simple());
     stage.record_unit(&name)?;
     let unit=OwnedUnit{name:name.clone(),description:format!("Rivet operation {} owner {}",operation.0,nonce)};
+    // No unit launch is possible until ownership commits in the same fenced ledger.
+    ledger.transition(0,crate::ledger::Transition::BindWorker{operation,unit:name.clone(),description:unit.description.clone()}).await?;
+    let guard_cancel=cancel.clone();let guard_ledger=ledger.cancellation();let guard_name=name.clone();
+    struct LaunchGuard(tokio::task::JoinHandle<()>);
+    impl Drop for LaunchGuard{fn drop(&mut self){self.0.abort();}}
+    let _guard=LaunchGuard(tokio::spawn(async move{
+        let pair=tokio::select!{biased;_=guard_cancel.cancelled()=>return,_=guard_ledger.cancelled()=>return,_=revoked.cancelled()=>return,pair=listener.accept()=>pair};
+        if let Ok((mut stream,_))=pair{
+            let mut challenge=vec![0;guard_name.len()];
+            if !matches!(tokio::time::timeout(Duration::from_secs(3),stream.read_exact(&mut challenge)).await,Ok(Ok(_))){return;}
+            if challenge!=guard_name.as_bytes()||guard_cancel.is_cancelled()||guard_ledger.is_cancelled()||revoked.is_cancelled(){return;}
+            let _=stream.write_all(b"allowed").await;
+        }
+    }));
     let mut command=manager("/usr/bin/systemd-run");
     command.args(["--user","--collect","--wait","--pipe","--service-type=exec","--quiet","--unit"]).arg(&name);
     command.arg(format!("--property=Description={}",unit.description));
@@ -159,7 +178,7 @@ async fn perform_inner(request:ProcessRequest,operation:crate::domain::Operation
         "--property=NoNewPrivileges=yes","--property=OOMPolicy=kill"]);
     command.arg(format!("--property=RuntimeMaxSec={}ms",request.timeout_ms+7000));
     let identity=stage.identity()?;
-    command.args(["/usr/bin/env","-i","PATH=/usr/bin"]).arg(&executable).arg("__unit-launch").arg(env!("RIVET_BUILD_DIGEST")).arg(&name).arg(identity.0.to_string()).arg(identity.1.to_string()).arg(git.as_ref().map(|g|serde_json::to_string(g).expect("mount serialization")).unwrap_or_else(||"-".into())).arg("--");
+    command.args(["/usr/bin/env","-i","PATH=/usr/bin"]).arg(&executable).arg("__unit-launch").arg(env!("RIVET_BUILD_DIGEST")).arg(&name).arg(identity.0.to_string()).arg(identity.1.to_string()).arg(git.as_ref().map(|g|serde_json::to_string(g).expect("mount serialization")).unwrap_or_else(||"-".into())).arg(serde_json::to_string(&owner).map_err(|_|Error::Invalid)?).arg("--");
     command.args(["/usr/bin/bwrap","--unshare-all","--unshare-user","--disable-userns","--die-with-parent","--new-session","--cap-drop","ALL"]);
     for path in ["/usr/bin","/usr/lib","/usr/lib64","/usr/libexec","/usr/include"] {command.args(["--ro-bind",path,path]);}
     command.args(["--symlink","usr/bin","/bin","--symlink","usr/lib","/lib","--symlink","usr/lib64","/lib64",
@@ -245,7 +264,7 @@ pub fn bootstrap(args:&[String],git:Option<bool>,mcp:bool)->Result<()> {
 }
 
 /// Trusted service entry: verify actual kernel limits before mounting/executing the worker.
-pub fn unit_launch(unit:&str, device:&str, inode:&str, git:&str, args:&[String])->Result<()> {
+pub fn unit_launch(unit:&str, device:&str, inode:&str, git:&str, owner:&str, args:&[String])->Result<()> {
     use std::os::unix::process::CommandExt;
     let id=unit.strip_prefix("rivet-worker-").and_then(|s|s.strip_suffix(".service")).ok_or(Error::Invalid)?;
     let (operation,nonce)=id.split_once('-').ok_or(Error::Invalid)?;
@@ -260,6 +279,8 @@ pub fn unit_launch(unit:&str, device:&str, inode:&str, git:&str, args:&[String])
     for (file,expected) in [("cpu.max","100000 100000"),("memory.max","536870912"),("memory.swap.max","0"),("pids.max","32")] {
         if std::fs::read_to_string(root.join(file))?.trim()!=expected{return Err(Error::Unsupported);}
     }
+    let owner:crate::ledger::OwnerScope=serde_json::from_str(owner).map_err(|_|Error::Invalid)?;
+    crate::ledger::verify_dispatch(&owner,crate::domain::OperationId(uuid::Uuid::parse_str(&id).map_err(|_|Error::Invalid)?))?;
     use cap_std::fs::MetadataExt;
     use std::os::fd::AsRawFd;
     let project=crate::config::Project::open(Path::new(env!("RIVET_SOURCE_ROOT")))?;
@@ -312,6 +333,13 @@ pub fn unit_launch(unit:&str, device:&str, inode:&str, git:&str, args:&[String])
     rustix::io::fcntl_setfd(&executable,rustix::io::FdFlags::empty()).map_err(|_|Error::State)?;
     let position=args.iter().position(|arg|arg=="__RIVET_EXEC_FD__").ok_or(Error::Invalid)?;
     args[position]=executable.as_raw_fd().to_string();
+    // A live core, current grant and independent cancellation tokens must affirm launch.
+    // The private socket and all its descriptors disappear before untrusted exec.
+    let base=rustix::fs::openat2(&project.dir,format!(".build/runtime/{id}"),rustix::fs::OFlags::RDONLY|rustix::fs::OFlags::DIRECTORY|rustix::fs::OFlags::CLOEXEC,rustix::fs::Mode::empty(),rustix::fs::ResolveFlags::BENEATH|rustix::fs::ResolveFlags::NO_SYMLINKS|rustix::fs::ResolveFlags::NO_XDEV).map_err(|_|Error::Denied)?;
+    {let mut stream=std::os::unix::net::UnixStream::connect(format!("/proc/self/fd/{}/control.sock",base.as_raw_fd()))?;
+        stream.set_read_timeout(Some(Duration::from_secs(3)))?;stream.set_write_timeout(Some(Duration::from_secs(3)))?;
+        std::io::Write::write_all(&mut stream,unit.as_bytes())?;let mut answer=[0;7];std::io::Read::read_exact(&mut stream,&mut answer)?;if &answer!=b"allowed"{return Err(Error::Denied);}
+    }
     let _retained_git_directory=git_directory;let _protected_descriptors=protected_descriptors;
     let _error=std::process::Command::new(&args[0]).args(&args[1..]).env_clear().env("PATH","/usr/bin").exec();
     Err(Error::State)
@@ -327,4 +355,10 @@ impl ProcessRequest {
             "files":{"type":"object","maxProperties":1024,"additionalProperties":{"type":"string"}},"timeout_ms":{"type":"integer","minimum":1,"maximum":60000}}});
         crate::tools::ToolDescriptor{id:"rivet:process-check".into(),version:1,build_digest:DESCRIPTOR.into(),input_schema:schema.to_string(),output_limit:65536,effect:crate::tools::EffectClass::External,permissions:vec!["process".into(),"source-projection".into()],platform:"linux".into(),cancellable:true,reconcilable:false}
     }
+}
+
+/// Recovery can stop only an exactly recorded Rivet UUID/nonce/description binding.
+pub(crate) async fn reconcile_owned(operation:crate::domain::OperationId,name:&str,description:&str)->Result<()> {
+    crate::recovery::validate_worker(operation,name,description)?;
+    let unit=OwnedUnit{name:name.into(),description:description.into()};unit.stop().await
 }

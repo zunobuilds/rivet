@@ -217,7 +217,7 @@ impl Supervisor {
         }
         ledger.transition(0, Transition::Authorize { operation: proposal.operation, grant: reference, expiry, scope: proposal.digest()?, permission_epoch:broker.epoch() }).await?;
         self.check_cancelled()?;
-        ledger.transition(1, Transition::Intent { operation: proposal.operation }).await?;
+        ledger.transition(1, Transition::PreparedIntent { operation: proposal.operation, intent:files.prepare_intent(&action)? }).await?;
         ledger.transition(2, Transition::Dispatched { operation: proposal.operation }).await?;
         let before_revision = match &action {
             FileAction::Write {expected, ..} => expected.as_ref().map(|r|r.digest.clone()),
@@ -243,9 +243,10 @@ impl Supervisor {
             Err(Error::Interrupted) => Outcome::Cancelled,
             Err(_) => Outcome::Failed,
         };
+        let artifacts=if let Ok(result)=&effect{if result.diff.is_empty(){vec![]}else{vec![ledger.retain_artifact(proposal.operation,result.diff.as_bytes().to_vec(),"text/x-diff").await?.digest]}}else{vec![]};
         let receipt = ExecutionReceipt {
             schema_version: 1, operation: proposal.operation, attempt: proposal.attempt, outcome,
-            exit_code: None, error: effect.as_ref().err().map(|e|e.kind().to_owned()), artifacts: vec![],
+            exit_code: None, error: effect.as_ref().err().map(|e|e.kind().to_owned()), artifacts,
             before_revision, after_revision: effect.as_ref().ok().and_then(|r|r.revision.as_ref().map(|r|r.digest.clone())),
             redacted_output: effect.as_ref().ok().map_or_else(String::new, |r|format!("changed={};diff_sha256={}",r.changed,crate::tools::sha256(r.diff.as_bytes()))),
         };
@@ -286,13 +287,15 @@ impl Supervisor {
         if let Err(e)=broker.consume(grant,&proposal,now){ledger.transition(0,Transition::Deny{operation:proposal.operation}).await?;return Err(e);}
         ledger.transition(0,Transition::Authorize{operation:proposal.operation,grant:reference,expiry,scope:proposal.digest()?,permission_epoch:broker.epoch()}).await?;
         self.check_cancelled()?;
-        ledger.transition(1,Transition::Intent{operation:proposal.operation}).await?;
+        let intent=if is_mcp{crate::recovery::Intent::Mcp{request_sha256:proposal.digest()?}}else{crate::recovery::Intent::Check{projection_sha256:crate::tools::sha256(&serde_json::to_vec(&request.files).map_err(|_|Error::Invalid)?)}};
+        ledger.transition(1,Transition::PreparedIntent{operation:proposal.operation,intent}).await?;
         ledger.transition(2,Transition::Dispatched{operation:proposal.operation}).await?;
+        let port=ledger.port();
         let stop=self.stop.child_token();let operation=proposal.operation;let ledger_stop=ledger.cancellation();let revoked=broker.revocation();
         let mut request=request;
         request.timeout_ms=request.timeout_ms.min(expiry.saturating_sub(now)*1000).min(spec.deadline.saturating_sub(now)*1000);
         let effect=self.tasks.spawn(async move{
-            let work=async {if is_mcp{crate::tools::process::perform_mcp(request,operation,stop.clone()).await}else{crate::tools::process::perform(request,operation,stop.clone()).await}};tokio::pin!(work);
+            let work=async {if is_mcp{crate::tools::process::perform_mcp(request,operation,stop.clone(),port,revoked.clone()).await}else{crate::tools::process::perform(request,operation,stop.clone(),port,revoked.clone()).await}};tokio::pin!(work);
             tokio::select!{biased;
                 _=ledger_stop.cancelled()=>{stop.cancel();work.await},
                 _=revoked.cancelled()=>{stop.cancel();work.await},
@@ -324,10 +327,11 @@ impl Supervisor{
         if let Err(e)=broker.consume(grant,&proposal,now){ledger.transition(0,Transition::Deny{operation:proposal.operation}).await?;return Err(e);}
         let mount=workspace.mount(request.writable())?;let mut process=request.process()?;process.timeout_ms=process.timeout_ms.min(expiry.saturating_sub(now)*1000).min(spec.deadline.saturating_sub(now)*1000);
         ledger.transition(0,Transition::Authorize{operation:proposal.operation,grant:reference,expiry,scope:proposal.digest()?,permission_epoch:broker.epoch()}).await?;
-        self.check_cancelled()?;ledger.transition(1,Transition::Intent{operation:proposal.operation}).await?;ledger.transition(2,Transition::Dispatched{operation:proposal.operation}).await?;
+        self.check_cancelled()?;ledger.transition(1,Transition::PreparedIntent{operation:proposal.operation,intent:crate::recovery::Intent::Git{request_sha256:proposal.digest()?}}).await?;ledger.transition(2,Transition::Dispatched{operation:proposal.operation}).await?;
+        let port=ledger.port();
         let operation=proposal.operation;let stop=self.stop.child_token();let ledger_stop=ledger.cancellation();
         let effect=self.tasks.spawn(async move{
-            let _retained_workspace=workspace;let work=crate::tools::process::perform_git(process,operation,stop.clone(),mount);tokio::pin!(work);
+            let _retained_workspace=workspace;let work=crate::tools::process::perform_git(process,operation,stop.clone(),mount,port,revoked.clone());tokio::pin!(work);
             tokio::select!{biased;_=ledger_stop.cancelled()=>{stop.cancel();work.await},_=revoked.cancelled()=>{stop.cancel();work.await},r=&mut work=>r}
         }).await.map_err(|_|Error::State)?;
         let result=effect.and_then(|r|{if r.cancelled||r.truncated||r.exit_code!=Some(0){

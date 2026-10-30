@@ -7,6 +7,8 @@ use serde_json::json;
 pub struct Cli { #[command(subcommand)] pub command: Command }
 #[derive(Subcommand)]
 pub enum Command {
+    /// Inspect recovery evidence or create an exact-snapshot consistent backup.
+    Repair {#[command(subcommand)] command:RepairCommand},
     /// A provider/tool request executes only after exact interactive review.
     Chat {#[arg(long)] task:String, #[arg(long)] config:Option<PathBuf>, #[arg(long)] state_dir:Option<PathBuf>, #[arg(long)] session:Option<String>, #[arg(long,default_value_t=100)] steps:u32, #[arg(long,default_value_t=3600)] deadline_seconds:u64, #[arg(long,default_value_t=65536)] token_budget:u64, #[arg(long,default_value_t=0)] spend_ceiling_micros:u64, #[arg(long,default_value_t=0)] request_cost_micros:u64, #[arg(long)] ephemeral_key_stdin:bool},
     /// Review/create the source-only Rust binary recipe; no build/install is run.
@@ -18,6 +20,8 @@ pub enum Command {
     State { #[command(subcommand)] command: StateCommand },
     Session { #[command(subcommand)] command: SessionCommand },
 }
+#[derive(Subcommand)]
+pub enum RepairCommand {Recover{#[arg(long)]state_dir:Option<PathBuf>,#[arg(long)]approve:String},Inspect{#[arg(long)]state_dir:Option<PathBuf>},Backup{#[arg(long)]state_dir:Option<PathBuf>,#[arg(long)]approve:String}}
 #[derive(Subcommand)]
 pub enum ProjectCommand { New {name:String, #[arg(long)] approve:Option<String>} }
 #[derive(Subcommand)]
@@ -37,6 +41,9 @@ fn output(value: serde_json::Value, structured: bool) {
 }
 pub async fn execute(cli: Cli, project: &Project) -> Result<()> {
     match cli.command {
+        Command::Repair{command:RepairCommand::Recover{state_dir,approve}}=>output(serde_json::to_value(ledger::recover_state(project,state(&state_dir),&approve).await?).map_err(|_|crate::error::Error::State)?,true),
+        Command::Repair{command:RepairCommand::Inspect{state_dir}}=>output(serde_json::to_value(ledger::repair_inspect(project,state(&state_dir))?).map_err(|_|crate::error::Error::State)?,true),
+        Command::Repair{command:RepairCommand::Backup{state_dir,approve}}=>output(serde_json::to_value(ledger::backup_state(project,state(&state_dir),&approve)?).map_err(|_|crate::error::Error::State)?,true),
         Command::Chat{task,config,state_dir,session,steps,deadline_seconds,token_budget,spend_ceiling_micros,request_cost_micros,ephemeral_key_stdin}=>{
             let configuration=project.config(config.as_deref())?;
             let provider=configuration.provider.ok_or(crate::error::Error::Unsupported)?;

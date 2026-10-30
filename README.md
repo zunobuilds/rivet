@@ -28,7 +28,7 @@ Rivet is intended to be free and open-source software (FOSS), but no license has
 | --- | --- |
 | Product definition | Recorded in the [project brief](planning/RIVET_PROJECT_BRIEF.md), dated 30 October 2026. |
 | Repository guidance | [AGENTS.md](AGENTS.md) defines work boundaries; the [documentation guide](GITHUB_DOCUMENTATION_GUIDE.md) defines documentation practices. |
-| Foundation | Administrative CLI, schema-v2 ledger/budgets/sessions, reviewed compatible-provider Solo loop and supervised file/process/local Git APIs. Synthetic endpoint qualification only. |
+| Foundation | Administrative CLI, schema-v3 ledger/budgets/sessions, reviewed compatible-provider Solo loop and supervised file/process/local Git APIs. Synthetic endpoint qualification only. |
 | Source build | Rust 1.99.1, installed GCC and bubblewrap; contained developer build route below. No installer. |
 | Testing | Deterministic offline unit/integration and build-containment checks; no broad platform qualification, CI or performance results. |
 | Licensing | Undecided; no license file is present. |
@@ -55,7 +55,7 @@ scripts/cargo-contained offline run --locked --offline -- session new
 scripts/cargo-contained offline run --locked --offline -- session list --json
 ```
 
-State defaults to `.rivet-state/`; `status`, `state init` and session commands accept `--state-dir PATH` inside the project. State roots must be owner-only directories without links. Status/list refuse busy state or WAL/recovery remnants; No recovery command is available yet. Help/version, config check, status and session list are read-only. Exit classes are 0 success, 2 invalid input/config, 3 unsupported/not-ready capability, 4 state/lock/I/O failure, and 130 interruption.
+State defaults to `.rivet-state/`; `status`, `state init` and session commands accept `--state-dir PATH` inside the project. State roots must be owner-only directories without links. Status/list refuse busy state or WAL/recovery remnants; `repair inspect` reports raw recovery evidence; explicit snapshot-bound `repair recover` preserves journals and pauses ambiguous work without replay. `repair backup` creates a verified quiescent database backup. Restore and full P2 recovery qualification remain incomplete; see [P2a checkpoint](planning/research/p2a-checkpoint.md). Help/version, config check, status and session list are read-only. Exit classes are 0 success, 2 invalid input/config, 3 unsupported/not-ready capability, 4 state/lock/I/O failure, and 130 interruption.
 
 A minimal optional `.rivet.toml` contains `schema_version = 1`. The optional `[provider]` table accepts `profile`, `endpoint` and `model` strings. Status reports `configured-unverified`; configuration checks never contact an endpoint. The first working profile is `llama.cpp-compatible`. Unknown fields or schema versions fail. Do not store keys in configuration; no keyring backend is qualified. Anthropic accepts an explicit ephemeral stdin key; it has only synthetic qualification.
 

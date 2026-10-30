@@ -2,7 +2,6 @@ use crate::error::{Error, Result};
 use cap_std::{ambient_authority, fs::{Dir, OpenOptions, OpenOptionsExt}};
 use serde::{Deserialize, Serialize};
 use std::{path::{Component, Path, PathBuf}};
-use cap_std::fs::MetadataExt as CapMetadataExt;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -79,20 +78,19 @@ impl Project {
     }
     pub fn config(&self, path: Option<&Path>) -> Result<Config> {
         let relative = self.relative(path.unwrap_or(Path::new(".rivet.toml")))?;
-        if !self.check_components(&relative)? {
-            return if path.is_none() { Ok(Config::default()) } else { Err(Error::Invalid) };
-        }
-        let metadata = self.dir.symlink_metadata(&relative)?;
-        if !metadata.is_file() || metadata.nlink() != 1 || metadata.len() > 1024 * 1024 { return Err(Error::Invalid); }
-        let mut options = OpenOptions::new(); options.read(true).custom_flags(0o400000);
-        let parent = relative.parent().filter(|p| !p.as_os_str().is_empty());
-        let directory = match parent { Some(path) => self.open_directory(path)?, None => self.dir.try_clone()? };
-        let file = directory.open_with(relative.file_name().ok_or(Error::Invalid)?, &options)?;
-        let opened = file.metadata()?;
-        if opened.ino() != metadata.ino() || opened.dev() != metadata.dev() { return Err(Error::State); }
+        let parent=relative.parent().filter(|p|!p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        let resolve=rustix::fs::ResolveFlags::BENEATH|rustix::fs::ResolveFlags::NO_SYMLINKS|rustix::fs::ResolveFlags::NO_XDEV;
+        let parent=rustix::fs::openat2(&self.dir,parent,rustix::fs::OFlags::RDONLY|rustix::fs::OFlags::DIRECTORY|rustix::fs::OFlags::CLOEXEC,rustix::fs::Mode::empty(),resolve).map_err(|e|if e==rustix::io::Errno::LOOP||e==rustix::io::Errno::XDEV{Error::State}else{Error::Invalid})?;
+        let fd=match rustix::fs::openat2(&parent,relative.file_name().ok_or(Error::Invalid)?,rustix::fs::OFlags::RDONLY|rustix::fs::OFlags::CLOEXEC|rustix::fs::OFlags::NONBLOCK,rustix::fs::Mode::empty(),resolve){
+            Ok(fd)=>fd,Err(rustix::io::Errno::NOENT) if path.is_none()=>return Ok(Config::default()),Err(rustix::io::Errno::LOOP|rustix::io::Errno::XDEV)=>return Err(Error::State),Err(_)=>return Err(Error::Invalid),
+        };
+        let mut file=std::fs::File::from(fd);let opened=file.metadata()?;
+        use std::os::unix::fs::MetadataExt;
+        if !opened.is_file()||opened.nlink()!=1||opened.len()>1024*1024{return Err(Error::Invalid);}
         use std::io::Read;
-        let mut input = String::new(); file.into_std().take(1024 * 1024 + 1).read_to_string(&mut input).map_err(|_| Error::Invalid)?;
-        if input.len() > 1024 * 1024 { return Err(Error::Invalid); }
+        let mut input=String::new();(&mut file).take(1024*1024+1).read_to_string(&mut input).map_err(|_|Error::Invalid)?;
+        let after=file.metadata()?;
+        if input.len()>1024*1024||opened.len()!=after.len()||opened.mtime()!=after.mtime()||opened.mtime_nsec()!=after.mtime_nsec()||opened.ctime()!=after.ctime()||opened.ctime_nsec()!=after.ctime_nsec(){return Err(Error::Invalid);}
         Config::parse(&input)
     }
 }

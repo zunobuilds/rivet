@@ -56,7 +56,7 @@ async fn supervised_file_lifecycle_records_intent_and_preserves_stale_edits() {
     let count: i64 = db.query_row("SELECT count(*) FROM events WHERE kind='intent-recorded'",[],|r|r.get(0)).unwrap(); assert!(count>=10);
     let mut statement = db.prepare("SELECT kind FROM events WHERE entity_id=(SELECT id FROM operations ORDER BY rowid LIMIT 1) ORDER BY sequence").unwrap();
     let events = statement.query_map([],|r|r.get::<_,String>(0)).unwrap().collect::<std::result::Result<Vec<_>,_>>().unwrap();
-    assert_eq!(events,["proposed","authorized","intent-recorded","dispatched","receipt-recorded","terminal"]);
+    assert_eq!(events,["proposed","authorized","intent-recorded","dispatched","artifact-linked","receipt-recorded","terminal"]);
 }
 #[tokio::test]
 async fn no_clobber_bounds_and_ambiguous_patch_fail_without_file_changes() {

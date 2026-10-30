@@ -12,10 +12,11 @@ Current evidence: [P1a implementation](research/p1a-evidence.md) and [extended-r
 | P1b | Bounded tool APIs qualified on this host: descriptor-safe files, cgroup/namespace/Landlock checks/cancellation, selected local Git, patch/check/diff/receipt fixture. See runtime evidence for limits. |
 | P1c | Compatible streamed transport, bounded context/budgets, reviewed terminal Solo loop, continuation and source recipe; synthetic/native evidence in [P1c](research/p1c-solo.md). No live inference tested. |
 | P1d | Synthetic Ollama/Anthropic, scoped rmcp stdio and content-pinned skills; [evidence](research/p1d-adapters.md). No live inference/keyring qualification. |
-| P2a–P2b | Unstarted; require accepted P1. Actual 72-hour lifecycle qualification remains required. |
+| P2a | Partial: schema-v3 intents/artifacts/fencing, model-free inspection/recovery/backup and real process-crash tests. Restore/full acceptance remain; [checkpoint](research/p2a-checkpoint.md). |
+| P2b | Unstarted; requires accepted P2a and actual 72-hour lifecycle qualification. |
 | P3a–P3c | Unstarted; require accepted P2 and preceding P3 steps. Approved mode cardinalities unchanged. |
 
-Current next work: P2a durable intents/reconciliation, artifacts and model-free repair/backup/restore after the P1d checkpoint. The owner supplied a narrow host-access exception and the old delegation blocker is resolved for temporary user-systemd units. See [runtime evidence](research/p1b-runtime.md); do not use the historical blocker text as a reason to stop this authorized continuation.
+Current next work: finish P2a reconciliation/crash coverage and safe explicit restore, following the [exact handoff](research/p2a-checkpoint.md#remaining-work--exact-next-handoff). P2a is not accepted; P2b/P3 remain unstarted. The owner supplied a narrow host-access exception and the old delegation blocker is resolved for temporary user-systemd units. See [runtime evidence](research/p1b-runtime.md); do not use the historical blocker text as a reason to stop this authorized continuation.
 
 ## Implementation entry points
 

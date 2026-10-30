@@ -208,6 +208,17 @@ impl FileWorkspace {
         }
         Ok(())
     }
+    /// Authorized pre-effect observation for a durable conditional-mutation description.
+    pub(crate) fn prepare_intent(&self,action:&FileAction)->Result<crate::recovery::Intent>{
+        self.resources(action)?;
+        if let FileAction::Patch{path,expected,old,new}=action{
+            if old.is_empty()||old.len()>LIMIT||new.len()>LIMIT{return Err(Error::Invalid);}
+            let (before,revision,_)=self.snapshot(path)?;
+            if &revision!=expected||before.match_indices(old).count()!=1{return Err(Error::Conflict);}
+            return Ok(crate::recovery::Intent::File{path:path.clone(),before:Some(expected.clone()),after_sha256:Some(sha256(before.replacen(old,new,1).as_bytes())),rename_to:None});
+        }
+        crate::recovery::Intent::file(action,self.resources(action)?)
+    }
     /// Called only after broker consumption and committed intent by the supervisor.
     pub(crate) fn perform(&self, action: &FileAction, stop: &CancellationToken) -> Result<FileResult> {
         let _lane = self.lane.lock().map_err(|_| Error::State)?;
@@ -293,12 +304,16 @@ mod boundary_tests {
             assert!(matches!(files.perform(&FileAction::Read {path:"mounted/file".into()},&stop),Err(Error::Denied)));
             assert!(matches!(files.perform(&FileAction::Write {path:"mounted/new".into(),expected:None,text:"must not write".into()},&stop),Err(Error::Denied)));
             assert!(!Path::new(&root).join("source/new").exists());
+            assert!(crate::ledger::Ledger::open(&Project::open(Path::new(&root)).unwrap(),Path::new("mounted/private-state")).is_err());
+            assert!(!Path::new(&root).join("source/private-state").exists());
+            assert!(Project::open(Path::new(&root)).unwrap().config(Some(Path::new("mounted/config.toml"))).is_err());
             return;
         }
         let root = tempfile::tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join(".build/tmp")).unwrap();
         std::fs::create_dir(root.path().join("source")).unwrap();
         std::fs::create_dir(root.path().join("mounted")).unwrap();
         std::fs::write(root.path().join("source/file"),"source").unwrap();
+        std::fs::write(root.path().join("source/config.toml"),"schema_version=1").unwrap();
         let result = std::process::Command::new("/usr/bin/bwrap")
             .args(["--unshare-user","--unshare-pid","--die-with-parent","--ro-bind","/","/","--proc","/proc","--bind"])
             .arg(root.path()).arg(root.path()).arg("--bind").arg(root.path().join("source")).arg(root.path().join("mounted"))

@@ -70,3 +70,5 @@ The owner subsequently authorized the narrow user-systemd/cgroup investigation a
 P1c continuation: [Solo implementation evidence](p1c-solo.md) records the configured compatible transport, reviewed bounded loop, durable budgets, migration backup and actual synthetic/native tests. The next authorized work is P1d; P2/P3 prerequisites and the real 72-hour gate remain.
 
 P1d continuation: [adapter/MCP/skill evidence](p1d-adapters.md) records synthetic native profiles and real sandboxed stdio MCP plus pinned skill permission tests. P2a is next; no P2/P3 acceptance or 72-hour claim.
+
+Current P2a continuation: [partial recovery checkpoint](p2a-checkpoint.md) records durable intents/artifacts/worker fences, model-free repair/backup and real process-crash evidence. Restore and P2 acceptance remain incomplete; P2b/P3 are unstarted. Follow its exact remaining-work handoff. The run is approaching the AGENTS.md allowance threshold; do not infer completion of later stages.

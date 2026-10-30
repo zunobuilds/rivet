@@ -3,7 +3,7 @@ use rivet::{cli::{Cli, execute}, config::Project, error::{Error, Result}};
 fn main() {
     let args:Vec<String>=std::env::args().collect();
     if args.get(1).is_some_and(|a|a=="__unit-launch") {
-        let result=if args.len()>8 && args[2]==env!("RIVET_BUILD_DIGEST") && args[7]=="--"{rivet::tools::process::unit_launch(&args[3],&args[4],&args[5],&args[6],&args[8..])}else{Err(Error::Invalid)};
+        let result=if args.len()>9 && args[2]==env!("RIVET_BUILD_DIGEST") && args[8]=="--"{rivet::tools::process::unit_launch(&args[3],&args[4],&args[5],&args[6],&args[7],&args[9..])}else{Err(Error::Invalid)};
         if let Err(error)=result{eprintln!("{error}");std::process::exit(error.exit_code());}
         return;
     }

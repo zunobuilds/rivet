@@ -21,3 +21,5 @@ pub mod scaffold;
 pub mod terminal;
 pub mod mcp;
 pub mod skills;
+pub mod recovery;
+pub mod artifacts;

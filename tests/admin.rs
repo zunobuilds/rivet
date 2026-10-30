@@ -82,7 +82,16 @@ async fn locks_remnants_newer_schema_and_unsafe_paths_fail_closed() {
     let db = rusqlite::Connection::open(root.path().join("state/ledger.sqlite")).unwrap();
     db.execute("UPDATE meta SET schema_version=999", []).unwrap(); drop(db);
     let before = snapshot(root.path()); assert!(matches!(Ledger::open(&project, state), Err(rivet::error::Error::State)));
-    assert!(matches!(ledger::inspect(&project, state), Err(rivet::error::Error::State))); assert!(snapshot(root.path()) == before, "filesystem snapshot changed");
+    // Simultaneous subprocess startup may briefly retain the cooperative lock.
+    // Busy is fail-closed; this assertion specifically needs to reach schema validation.
+    let deadline=std::time::Instant::now()+std::time::Duration::from_millis(500);
+    let inspection=loop{
+        match ledger::inspect(&project,state){
+            Err(rivet::error::Error::Busy) if std::time::Instant::now()<deadline=>std::thread::sleep(std::time::Duration::from_millis(5)),
+            result=>break result,
+        }
+    };
+    assert!(matches!(inspection,Err(rivet::error::Error::State)),"unexpected schema inspection: {inspection:?}"); assert!(snapshot(root.path()) == before, "filesystem snapshot changed");
     symlink("state", root.path().join("linked")).unwrap();
     assert!(Ledger::open(&project, Path::new("linked")).is_err());
     assert!(Ledger::open(&project, Path::new("../escape")).is_err());
