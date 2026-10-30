@@ -13,9 +13,10 @@
 | Contained locked offline `check --all-targets` | Passed without warnings. |
 | Contained `fmt --all -- --check` | Unavailable: no `fmt` subcommand. No installation. |
 | Contained `clippy --locked --offline --all-targets -- -D warnings` | Unavailable: no `clippy` subcommand. No installation. |
-| Actual CLI help/config/status/template | Eight invocations passed, including absent-provider inspection, Pair template and command-family help. |
+| Actual CLI help/config/status/template and examples | Sixteen invocations passed, including absent/configured-unverified provider examples, Pair template/hierarchy preview and state/session writes under `.build/docs-state`. No inference sent. |
+| Fresh offline dependency metadata/archive audit | 227 archives match Cargo.lock SHA-256; no Git/private source dependencies. Maximum declared dependency Rust minimum 1.89.0; not a legal/advisory clearance. |
 
-Raw logs are ignored repository-local `.build/post-p3-tests.txt`, `post-p3-probe.txt`, `post-p3-build-boundary.txt`, `post-p3-build.txt`, `post-p3-check.txt`, `post-p3-fmt.txt`, `post-p3-clippy.txt` and `post-p3-cli.json`. Durable counts/results are recorded here; local logs are not a portable public test artifact.
+Raw logs are ignored repository-local `.build/post-p3-tests.txt`, `post-p3-probe.txt`, `post-p3-build-boundary.txt`, `post-p3-build.txt`, `post-p3-check.txt`, `post-p3-fmt.txt`, `post-p3-clippy.txt` `post-p3-cli.json`, `post-p3-examples.json` and `post-p3-dependencies.txt`. Durable counts/results are recorded here; local logs are not a portable public test artifact.
 
 ## Coverage and classification
 
@@ -42,4 +43,4 @@ Future requalification requires explicit narrow temporary-unit/cgroup/proc autho
 
 ## Documentation checks
 
-Final command/link/structure/secret/diff results and commits are recorded in [the handoff](../POST_P3_HANDOFF.md). No browser-rendered Markdown preview, dependency vulnerability clearance, fresh dependency archive audit, package installation or release was performed. No AGENTS.md, license, source, lockfile or host configuration change was made.
+Final command/link/structure/secret/diff results and commits are recorded in [the handoff](../POST_P3_HANDOFF.md). No browser-rendered Markdown preview, dependency vulnerability clearance, package installation or release was performed. No AGENTS.md, license, source, lockfile or host configuration change was made.

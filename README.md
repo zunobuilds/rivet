@@ -15,7 +15,7 @@ scripts/cargo-contained offline build --locked --offline
 .build/target/debug/rivet status --json
 ```
 
-Without configuration, provider status is `absent`. These inspections do not download models or create runtime state. For a configured, permission-reviewed coding task, follow [Solo](docs/solo.md) and [providers](docs/providers.md).
+Without configuration, provider status is `absent`. These inspections do not download models or create runtime state. See the [observed output and checked examples](docs/solo.md). For a configured, permission-reviewed coding task, follow [Solo](docs/solo.md) and [providers](docs/providers.md).
 
 ## What works today
 

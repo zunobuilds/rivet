@@ -120,3 +120,8 @@ P0.6 raw JSON metadata is retained under root `.research-local/p06-*` only as sc
 | S68 | Pinned crates.io source archives: reqwest 0.13.5, rustls 0.23.46 and webpki-root-certs 1.0.11, acquired through the contained fetch route | Cargo.lock SHA-256 archive checks pass. Reqwest ClientBuilder source confirms no_proxy, redirect none, retry never and tls_certs_only; default platform verifier would read host trust paths. Reuse compiled Mozilla root certificates (CDLA-Permissive-2.0) via exact promoted transitive dependency to keep host trust files hidden. Original reqwest/rustls feature decisions retained; ring initialized explicitly. No live HTTPS request or global certificate discovery performed. See [Solo evidence](p1c-solo.md). |
 
 | S69 | Verified crates.io rmcp 3.8.0 source archive, including model.rs, client/async-RW transport and LICENSE | Actual protocol constants distinguish latest 2026-07-28 from initialize-compatible 2025-11-25. Pin the latter for this qualified stdio profile; selected client/child features build. SDK default line limit is 16 MiB, so Rivet explicitly applies 1 MiB plus framing quotas. Registry declares Apache-2.0; packaged notice retains non-relicensed MIT contributions and CC-BY-4.0 documentation. See [P1d evidence](p1d-adapters.md); no live MCP service or distribution claim. |
+
+
+## Post-P3 supplement — 30 October 2026
+
+[Dedicated source register](post-p3-sources.md) records the Android, hybrid UI/session, resources, Git/Trash/FTS and GPL-family primary sources, moving-snapshot limits and failed/recovered URLs. [Research handoff](../POST_P3_HANDOFF.md) owns conclusions and risks. Existing S01–S67 history remains unchanged; these new sources are grouped by topic rather than renumbering old citations.

@@ -48,4 +48,12 @@ Dependencies matter more than this proposal's numbering: multi-project UI requir
 
 Origin is `https://github.com/zunobuilds/rivet.git`, branch main. The brief conditionally permits one normal push only after verified P1–P3 acceptance and all publication checks. Fresh native acceptance is incomplete, so **no push was attempted**. No remotes/history were changed. Licensing remains pending.
 
-Final document/command/link/diff/secret checks, local commit hashes and allowance are added below when complete. No rendered Markdown preview or fresh whole-history secret/advisory certification is claimed.
+Final source-level documentation check: 46 Markdown files, 237 local links/anchors, zero errors; title/fence/newline checks passed. Two example TOML files parse through the actual CLI. Sixteen CLI/example invocations pass; no model calls. Build/check/tests were already successful and no source changed after them, so the suite was not rerun merely for prose. Fresh dependency audit verifies all 227 cached archives against Cargo.lock. Common private-key/API/GitHub/AWS/credential-URL patterns found no matches in task-authored documentation/examples; content review and diff whitespace checks also pass. This is not an exhaustive secret detector or whole-history certification. Newly cited upstream pages were read, with failed URLs/fallbacks recorded; inherited historical external URLs were not exhaustively re-fetched. No rendered Markdown preview or advisory clearance is claimed.
+
+Checkpoint `c888f9e` contains the audit/research/manual foundation. The following ordinary local commit contains the optional substantial second docs pass, final source/log/validation updates and this handoff; obtain its hash from Git history. There were no changes to AGENTS.md, GITHUB_DOCUMENTATION_GUIDE.md, source/tests, Cargo manifests/lock, or license files. The owner-supplied brief was committed unchanged.
+
+The initial commit attempt failed because host Git config was suppressed and identity was unavailable. The successful commits used invocation-only identity values matching repository history, with hooks/signing disabled and global/system config suppressed; no configuration was changed. Initial read-only metadata commands did not suppress implicit Git discovery, so absence of implicit configuration reads cannot be certified. No outside contents were manually inspected or printed.
+
+Remaining blocker is fresh native acceptance authority, not usage exhaustion or an application test failure. Stop after this handoff; do not start P4 or turn research into implementation.
+
+Final shell allowance: **82% five-hour remaining**, weekly 60%; usage limits did not require stopping. No push was attempted because fresh native acceptance remains incomplete.

@@ -24,3 +24,9 @@ GNU individual GPL/AGPL/LGPL text and FAQ pages timed out, including `.en.html` 
 No exact latest versions were selected for Android, UI or future controller dependencies. Project badges/README terms do not establish transitive artifact licensing. Maintenance evidence is limited to the retrieved pages, not an exhaustive release/advisory activity audit. Revalidate exact tags, archives, signatures, dependencies, licenses, notices and host compatibility in any later acquisition stage. No upstream benchmark numbers are presented as Rivet results.
 
 The openai-docs skill file is outside the user-authorized filesystem boundary and was not read; official upstream pages and repository code supplied this comparison. No out-of-scope skill-file access was inferred from its availability.
+
+
+Final license spot checks: [Frida COPYING](https://raw.githubusercontent.com/frida/frida/main/COPYING) confirms wxWindows Library Licence 3.1 and its exception; [MobSF LICENSE](https://raw.githubusercontent.com/MobSF/Mobile-Security-Framework-MobSF/master/LICENSE) contains GPLv3; [Apktool repository](https://github.com/iBotPeaches/Apktool) identifies Apache-2.0. A guessed Androguard `LICENCE-2.0` path returned 404; the guessed `LICENSE` path also returned 404, while the repository README license section confirms Apache-2.0. GNU GPLv2 text also timed out; OSI-hosted GPLv2 supplied the comparison reference. None of these moving files is a pinned redistribution audit.
+
+
+Androguard maintenance/API caveat: its current repository README distinguishes repository v5 from the published PyPI v4 package and flags outdated documentation. A future pin must choose/test one actual artifact/API rather than mixing moving-master features with a registry install. No installation was attempted.

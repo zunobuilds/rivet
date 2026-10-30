@@ -7,3 +7,5 @@ Use the [contained checks](building.md). Add regression coverage for meaningful 
 A review should include the problem, implementation, actual test results and remaining limits. Stage only related files. Do not rewrite history or push without the specific authorization required by AGENTS.md. Planned features require implementation scope approval; a roadmap entry is not permission.
 
 Documentation should use original wording, evidence-backed claims and valid relative links. Read the [documentation guide](../GITHUB_DOCUMENTATION_GUIDE.md). There is no established response-time promise or private vulnerability route yet; see [security](security.md).
+
+Before proposing publication, compare public claims to the latest evidence, inspect exact changes for credentials/private paths, check local links/anchors and `git diff --check`, and confirm the authorized branch/remote. Passing compiler/tests does not select a license, authorize a release or qualify unrun platforms. No CI badge or support promise should be added until its target and policy exist.

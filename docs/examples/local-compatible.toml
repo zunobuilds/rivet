@@ -1,0 +1,8 @@
+# Schema example only: no server/model is created or contacted by config check.
+schema_version = 1
+
+[provider]
+profile = "llama.cpp-compatible"
+endpoint = "http://127.0.0.1:8080/v1/chat/completions"
+model = "replace-with-your-existing-model-id"
+context_tokens = 32768

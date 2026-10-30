@@ -26,7 +26,7 @@ Fedora KDE Wayland/NVIDIA is a **future test target**, not verified support. Qua
 | scrcpy | Mirroring/input, Apache-2.0 | Optional human observation/control; capture/input separate grants. Not semantic test assertions or an emulator. |
 | JADX | DEX/APK Java decompilation, Apache-2.0 | Unrivet P5 primary readable-code candidate. Output can be incomplete or wrong; retain original bytecode and warnings. |
 | Apktool | Resource/manifest/smali decode/rebuild, Apache-2.0 | Complement JADX for resources and structure. Rebuild/signature changes are separate mutations, never equivalent to original APK. |
-| Androguard | Programmatic APK/DEX analysis, Apache-2.0 snapshot | Structured metadata/cross-reference alternative; qualify version/API/dependencies before making it a shared service. |
+| Androguard | Programmatic APK/DEX analysis, Apache-2.0 snapshot | Structured metadata/cross-reference alternative; repository v5 differs from published v4 and documents incomplete/outdated interfaces. Pin and test the actual artifact/API/dependencies. |
 | Frida | Runtime instrumentation, wxWindows Library Licence 3.1 family | Optional dynamic specialist. Server/root or gadget injection changes threat and license surface; require explicit target authority and version match. |
 | MobSF | Integrated static/dynamic security workflow, GPL-3.0 family | Optional broad specialist, not default daemon/UI. Higher dependency/service footprint; prevent automatic external scanning/upload and validate findings. |
 

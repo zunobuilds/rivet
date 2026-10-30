@@ -14,3 +14,9 @@
 | Copied binary rejects a project | Current build is checkout-bound. General installation and arbitrary external roots remain unqualified. |
 
 Include sanitized command, build digest, failure kind, expected result and minimal repository-contained reproduction when reporting a problem. Remove credentials and private project content. Avoid deleting `.rivet-state/` as a generic repair strategy.
+
+## Exit results
+
+Current typed error mapping: invalid input/configuration exits 2; unsupported capability or denied permission exits 3; interruption exits 130; state/busy/recovery/conflict/Git failures exit 4. JSON diagnostic kinds distinguish these cases where structured output is supported. Capture stderr as well as the exit code and avoid retry loops based only on “nonzero.”
+
+The administration field `execution_available: false` can coexist with `adapters_available: true`; this reports readiness conservatively and does not mean the source has no provider adapter. `sandbox check` probes only the explicit contained directory route; it is not the native systemd worker's readiness certificate. See [build qualification](building.md).

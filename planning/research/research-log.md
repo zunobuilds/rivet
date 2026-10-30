@@ -128,3 +128,20 @@ See [P2a acceptance](p2a-acceptance.md): schema 4, asset bundles, restartable di
 ## 30 October 2026 — P3c local Mesh / bounded Adaptive
 
 [P3c evidence](p3c-mesh-adaptive.md): schema 8 preserves graph/role history during quiescent, policy-bound composition changes; local peers have deterministic single ownership and main-chat conflict escalation. Synthetic Mesh and Pair→Solo execution, revocation, budgets and no-replay conflict resume pass alongside earlier qualification. P2a–P3c is complete in the recorded bounded profiles. STOP before P4; no push or automatic acquisition.
+
+
+## Post-P3 verification, research and documentation
+
+30 October 2026. Baseline `7642495`, main 15 ahead of locally recorded origin/main; only supplied POST_P3_RESEARCH_BRIEF.md was untracked. Read full rules/brief/guide and inspected master/roadmap/requirements, stage evidence, code/tests and Git history. Sequential authorization overrides stage stops only; no new host exception inferred. Existing contained runner reused offline, no acquisition or source changes.
+
+Fresh result: 77 passed / 0 failed / 8 ignored; eight native host tests not rerun. Build/check, both containment probes and 16 actual CLI/example invocations pass. Fresh metadata/archive audit passes for 227 locked archives. Rustfmt/Clippy attempted, unavailable. Full P1–P3 requalification remains partial; no push. Historical native passes are not fresh evidence. Detailed classifications: [verification](post-p3-verification.md).
+
+Created GitHub-native docs and concise original README after studying Odysseus/Codex/OpenCode. Completed Android, product/mod/UI, resources/tools/models, workspaces/sessions/broker, memory/human-edits, Recycle Bin/Git/export and licensing research. Current authority notices supersede stale implementation/dashboard exclusions while preserving history. PP01–PP12 distinguish decisions and recommendations. License recommendation is GPL-3.0-only for owner approval, no adoption. Risk/acceptance/future scopes: [handoff](../POST_P3_HANDOFF.md).
+
+Usage readings in order: 91%, 88%, 87% after intentional interruption/resume, 85% before optional polish, 83% during final validation. All ≥18%; ten-minute sustained-work interval. First checkpoint `c888f9e`; optional second documentation pass was therefore permitted after all required research. Added checked config/plan previews, observed output, operations/recovery reference and provider/diagnostic/contribution detail, informed additionally by ripgrep/uv documentation. No copied assets/wording or performance claims.
+
+Initial metadata Git commands used ordinary configuration discovery; no outside config content was explicitly inspected or printed, but absence of implicit host config reads cannot be certified. Subsequent Git commands suppress system/global config. First commit attempt then failed for missing author identity; used the same identity present in the last three repository commits via invocation-only options. No host/repository identity settings changed, no history rewrite.
+
+No AGENTS.md/guide/source/manifest/lock/license modifications, new feature implementation, outside-repo manual inspection, Unrivet access, installations, live/paid inference or release. Public research only; access failures and moving-version/license limits are in the [source supplement](post-p3-sources.md). Final validation/commits and publication outcome are recorded in the handoff.
+
+Final shell allowance: **82% five-hour remaining**, weekly 60%; usage limits did not require stopping. No push was attempted because fresh native acceptance remains incomplete.
