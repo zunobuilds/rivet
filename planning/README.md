@@ -1,20 +1,20 @@
 # Rivet planning index
 
-**Current status: P1a foundation implemented in `176bbb77`, with cleanup committed as `090f47c`. P1b is partially implemented and blocked at worker qualification.** The owner has authorized an extended run through P3c in dependency order. This permission waives stage approval/stopping gates only for this run; installations, host changes, live inference, outside-project access and pushes remain forbidden. Completion requires actual stage evidence, not authorization alone.
+**Current status: P1a foundation implemented in `176bbb77`, with cleanup committed as `090f47c`. P1b is partially implemented; the user-systemd delegation route is now verified and runtime/Git work continues.** The owner has authorized an extended run through P3c in dependency order. This permission waives stage approval/stopping gates only for this run; installations, host changes, live inference, outside-project access and pushes remain forbidden. Completion requires actual stage evidence, not authorization alone.
 
-Current evidence: [P1a implementation](research/p1a-evidence.md) and [extended-run checkpoint/handoff](research/extended-run.md). P1b–P3c have not passed acceptance; the detailed file-foundation results and missing controller-authority gate are recorded in the extended-run handoff. P0.5/P0.6 documents below remain design/history references, not implementation claims. No new push is authorized; historical user-reported pushes do not grant one.
+Current evidence: [P1a implementation](research/p1a-evidence.md) and [extended-run checkpoint/handoff](research/extended-run.md). P1b–P3c have not passed acceptance; the file-foundation history is in the extended-run handoff and the newly permitted delegation route is in [P1b runtime evidence](research/p1b-runtime.md). P0.5/P0.6 documents below remain design/history references, not implementation claims. No new push is authorized; historical user-reported pushes do not grant one.
 
 ## Current implementation handoff
 
 | Stage | Current result |
 | --- | --- |
 | P1a cleanup | Committed `090f47c`; recovery/cancellation/metadata regressions pass. Rustfmt/Clippy unavailable. |
-| P1b | Partial: supervised file-library operations and read-only worker preflight. Full file/worker/Git acceptance incomplete; blocked at P1b.2 on an authorized delegated cgroup-v2 route. |
+| P1b | Partial: files and supervised process foundation; native user-systemd CPU/memory/PID, namespace/Landlock, flooding/revocation and cleanup probes pass. File-race qualification, Git and full P1b acceptance remain. |
 | P1c–P1d | Authorized for the extended run, unstarted; require accepted P1b and Solo provider-loop prerequisites. |
 | P2a–P2b | Unstarted; require accepted P1. Actual 72-hour lifecycle qualification remains required. |
 | P3a–P3c | Unstarted; require accepted P2 and preceding P3 steps. Approved mode cardinalities unchanged. |
 
-Next input needed: an owner-provided existing cgroup-v2 delegation plus narrowly scoped controller-use authority; exact requirements and remaining implementation/verification work are in the [extended-run handoff](research/extended-run.md#limits-and-exact-resumption-handoff). Do not treat a plain fixture directory, the build wrapper or a short soak as satisfying runtime qualification.
+Current next work: finish P1b file-race/lease qualification and local Git protections, then the patch/check demonstration. The owner supplied a narrow host-access exception and the old delegation blocker is resolved for temporary user-systemd units. See [runtime evidence](research/p1b-runtime.md); do not use the historical blocker text as a reason to stop this authorized continuation.
 
 ## Implementation entry points
 

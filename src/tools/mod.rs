@@ -1,3 +1,4 @@
+pub mod process;
 pub mod files;
 use crate::{domain::{ActorId, OperationId, TaskId}, error::{Error, Result}};
 use serde::{Serialize, Deserialize};

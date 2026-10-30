@@ -109,7 +109,7 @@ pub enum Transition {
     RootTask { session: SessionId, run: RunId, task: TaskId, actor: ActorId },
     Propose { run: RunId, proposal: ToolProposal },
     Deny { operation: OperationId },
-    Authorize { operation: OperationId, grant: String, expiry: u64, scope: String },
+    Authorize { operation: OperationId, grant: String, expiry: u64, scope: String, permission_epoch: u64 },
     Intent { operation: OperationId },
     Dispatched { operation: OperationId },
     Receipt { receipt: ExecutionReceipt },
@@ -255,9 +255,9 @@ fn apply(connection: &mut Connection, command: LedgerCommand, epoch: u64) -> Res
             audit(&tx, &p.operation.0.to_string(), "provider", "proposed")?;
         },
         Transition::Deny { operation } => advance(&tx, operation, revision, "proposed", "denied")?,
-        Transition::Authorize { operation, grant, expiry, scope } => {
+        Transition::Authorize { operation, grant, expiry, scope, permission_epoch } => {
             advance(&tx, operation, revision, "proposed", "authorized")?;
-            tx.execute("INSERT INTO grants VALUES(?1,?2,?3,?4,?5)", params![grant,operation.0.to_string(),sql_integer(epoch)?,sql_integer(expiry)?,scope])?;
+            tx.execute("INSERT INTO grants VALUES(?1,?2,?3,?4,?5)", params![grant,operation.0.to_string(),sql_integer(permission_epoch)?,sql_integer(expiry)?,scope])?;
         },
         Transition::Intent { operation } => advance(&tx, operation, revision, "authorized", "intent-recorded")?,
         Transition::Dispatched { operation } => advance(&tx, operation, revision, "intent-recorded", "dispatched")?,

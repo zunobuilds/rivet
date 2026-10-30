@@ -8,6 +8,7 @@ impl Default for Supervisor {
     fn default() -> Self {
         let mut registry = crate::tools::Registry::default();
         registry.register(crate::tools::files::FileWorkspace::descriptor()).expect("built-in descriptor is valid");
+        registry.register(crate::tools::process::ProcessRequest::descriptor()).expect("built-in descriptor is valid");
         Self { stop: CancellationToken::new(), tasks: TaskTracker::new(), registry }
     }
 }
@@ -111,7 +112,7 @@ mod tests {
         assert!(matches!(ledger.transition(0,Transition::Intent {operation:p.operation}).await,Err(Error::Conflict)));
         let unknown = ToolProposal {operation:OperationId::default(),..p.clone()};
         ledger.transition(0,Transition::Propose {run:spec.run,proposal:unknown.clone()}).await.unwrap();
-        ledger.transition(0,Transition::Authorize {operation:unknown.operation,grant:uuid::Uuid::new_v4().to_string(),expiry:100,scope:unknown.digest().unwrap()}).await.unwrap();
+        ledger.transition(0,Transition::Authorize {operation:unknown.operation,grant:uuid::Uuid::new_v4().to_string(),expiry:100,scope:unknown.digest().unwrap(),permission_epoch:broker.epoch()}).await.unwrap();
         ledger.transition(1,Transition::Intent {operation:unknown.operation}).await.unwrap();
         ledger.transition(2,Transition::Dispatched {operation:unknown.operation}).await.unwrap();
         ledger.transition(3,Transition::Receipt {receipt:ExecutionReceipt {schema_version:1,operation:unknown.operation,attempt:1,outcome:Outcome::Unknown,exit_code:None,error:None,artifacts:vec![],before_revision:None,after_revision:None,redacted_output:String::new()}}).await.unwrap();
@@ -167,7 +168,7 @@ impl Supervisor {
         self.check_cancelled()?;
         if !allow { ledger.transition(0,Transition::Deny {operation:p.operation}).await?; return Err(Error::Denied); }
         let grant = broker.approve_inert(p,100)?;
-        ledger.transition(0,Transition::Authorize {operation:p.operation,grant:grant.reference(),expiry:100,scope:p.digest()?}).await?;
+        ledger.transition(0,Transition::Authorize {operation:p.operation,grant:grant.reference(),expiry:100,scope:p.digest()?,permission_epoch:broker.epoch()}).await?;
         broker.consume(grant,p,1)?;
         ledger.transition(1,Transition::Intent {operation:p.operation}).await?;
         ledger.transition(2,Transition::Dispatched {operation:p.operation}).await?;
@@ -195,7 +196,7 @@ impl Supervisor {
         let descriptor = self.registry.get("rivet:files",1).ok_or(Error::Unsupported)?;
         if descriptor.build_digest != proposal.descriptor_digest { return Err(Error::Denied); }
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| Error::State)?.as_secs();
-        if proposal.descriptor_digest != DESCRIPTOR || broker.epoch() != ledger.epoch()
+        if proposal.descriptor_digest != DESCRIPTOR 
             || spec.permission_epoch != broker.epoch() || now >= spec.deadline
             || spec.project != ledger.project_id() || files.identity() != ledger.workspace_identity() { return Err(Error::Denied); }
         ledger.transition(0, Transition::Propose { run: spec.run, proposal: proposal.clone() }).await?;
@@ -212,7 +213,7 @@ impl Supervisor {
         if let Err(error) = broker.consume(grant, &proposal, now) {
             ledger.transition(0, Transition::Deny { operation: proposal.operation }).await?; return Err(error);
         }
-        ledger.transition(0, Transition::Authorize { operation: proposal.operation, grant: reference, expiry, scope: proposal.digest()? }).await?;
+        ledger.transition(0, Transition::Authorize { operation: proposal.operation, grant: reference, expiry, scope: proposal.digest()?, permission_epoch:broker.epoch() }).await?;
         self.check_cancelled()?;
         ledger.transition(1, Transition::Intent { operation: proposal.operation }).await?;
         ledger.transition(2, Transition::Dispatched { operation: proposal.operation }).await?;
@@ -237,6 +238,44 @@ impl Supervisor {
         };
         ledger.transition(3, Transition::Receipt { receipt }).await?;
         if effect.is_ok() { ledger.transition(4, Transition::Terminal { operation: proposal.operation }).await?; }
+        effect
+    }
+}
+
+impl Supervisor {
+    pub async fn execute_process(&self,spec:&RunSpec,ledger:&crate::ledger::Ledger,broker:&mut crate::permissions::Broker,proposal:crate::tools::ToolProposal,grant:crate::permissions::Grant)->Result<crate::tools::process::ProcessResult> {
+        use crate::{domain::{ExecutionReceipt,Outcome},ledger::Transition,tools::process::{ProcessRequest,DESCRIPTOR}};
+        self.admit(spec)?;self.check_cancelled()?;
+        let descriptor=self.registry.get("rivet:process-check",1).ok_or(Error::Unsupported)?;
+        if descriptor.build_digest!=proposal.descriptor_digest{return Err(Error::Denied);}
+        let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_|Error::State)?.as_secs();
+        if proposal.descriptor_digest!=DESCRIPTOR || spec.project!=ledger.project_id() || spec.permission_epoch!=broker.epoch() || now>=spec.deadline{return Err(Error::Denied);}
+        ledger.transition(0,Transition::Propose{run:spec.run,proposal:proposal.clone()}).await?;
+        let request=serde_json::from_value::<ProcessRequest>(proposal.arguments.clone()).map_err(|_|Error::Invalid);
+        let validation=request.and_then(|r|{r.validate()?;if r.resources(spec.project)!=proposal.resources || now+(r.timeout_ms+999)/1000>spec.deadline{return Err(Error::Denied);}Ok(r)});
+        let request=match validation{Ok(r)=>r,Err(e)=>{ledger.transition(0,Transition::Deny{operation:proposal.operation}).await?;return Err(e);}};
+        let reference=grant.reference();let expiry=grant.expiry();
+        if let Err(e)=broker.consume(grant,&proposal,now){ledger.transition(0,Transition::Deny{operation:proposal.operation}).await?;return Err(e);}
+        ledger.transition(0,Transition::Authorize{operation:proposal.operation,grant:reference,expiry,scope:proposal.digest()?,permission_epoch:broker.epoch()}).await?;
+        self.check_cancelled()?;
+        ledger.transition(1,Transition::Intent{operation:proposal.operation}).await?;
+        ledger.transition(2,Transition::Dispatched{operation:proposal.operation}).await?;
+        let stop=self.stop.child_token();let operation=proposal.operation;let ledger_stop=ledger.cancellation();let revoked=broker.revocation();
+        let mut request=request;
+        request.timeout_ms=request.timeout_ms.min(expiry.saturating_sub(now)*1000);
+        let effect=self.tasks.spawn(async move{
+            let work=crate::tools::process::perform(request,operation,stop.clone());tokio::pin!(work);
+            tokio::select!{biased;
+                _=ledger_stop.cancelled()=>{stop.cancel();work.await},
+                _=revoked.cancelled()=>{stop.cancel();work.await},
+                result=&mut work=>result,
+            }
+        }).await.map_err(|_|Error::State)?;
+        let outcome=match &effect{Ok(r) if r.cancelled=>Outcome::Cancelled,Ok(r) if r.exit_code==Some(0)&&!r.truncated=>Outcome::Succeeded,Ok(_)=>Outcome::Failed,Err(_)=>Outcome::Unknown};
+        let receipt=ExecutionReceipt{schema_version:1,operation,attempt:proposal.attempt,outcome,exit_code:effect.as_ref().ok().and_then(|r|r.exit_code),error:effect.as_ref().err().map(|e|e.kind().into()),artifacts:vec![],before_revision:None,after_revision:None,redacted_output:effect.as_ref().ok().map_or_else(String::new,|r|format!("stdout_sha256={};stderr_sha256={};truncated={}",crate::tools::sha256(r.stdout.as_bytes()),crate::tools::sha256(r.stderr.as_bytes()),r.truncated))};
+        let terminal=matches!(receipt.outcome,Outcome::Succeeded|Outcome::Failed);
+        ledger.transition(3,Transition::Receipt{receipt}).await?;
+        if terminal{ledger.transition(4,Transition::Terminal{operation}).await?;}
         effect
     }
 }

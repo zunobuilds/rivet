@@ -2,7 +2,7 @@
 
 Rivet is a standalone AI coding-agent platform under development. Its Rust P1a foundation provides model-free administration, local SQLite sessions, and tested permission and supervisor contracts. Coding inference and the broader platform remain planned, with useful pre-1.0 milestones leading to a mature Linux release.
 
-**Status: P1a implemented, P1b partially implemented; no coding loop or terminal execution.** Administrative commands work without a provider, model, account or network connection. A supervised file-operation library is tested in contained fixtures; it is not exposed as a CLI coding loop. P1b worker qualification is blocked on a permitted delegated cgroup-v2 route. Later product capabilities described below remain **planned**. Format and Clippy qualification could not run because the installed toolchain lacks those commands; see the [P1a evidence](planning/research/p1a-evidence.md). No installer, release or benchmark is provided.
+**Status: P1a implemented, P1b partially implemented; no coding loop or terminal execution.** Administrative commands work without a provider, model, account or network connection. A supervised file-operation library is tested in contained fixtures; it is not exposed as a CLI coding loop. An explicitly authorized user-systemd worker route now passes preliminary runtime checks; full P1b/Git acceptance remains incomplete. Later product capabilities described below remain **planned**. Format and Clippy qualification could not run because the installed toolchain lacks those commands; see the [P1a evidence](planning/research/p1a-evidence.md). No installer, release or benchmark is provided.
 
 Rivet is intended to be free and open-source software (FOSS), but no license has been selected or included. The FOSS goal is not a present license grant.
 
@@ -78,7 +78,7 @@ Inspect the worker prerequisite without creating state or searching host paths:
 scripts/cargo-contained offline run --locked --offline -- sandbox check --json
 ```
 
-It currently reports `ready: false`, `controls: "not-configured"` and exits 3. `--control-dir PATH` examines only an explicitly supplied directory inside the project; an ordinary directory of controller-like files is rejected as a fake cgroup. Even a real mount is only a candidate until delegation, strict Landlock, namespace/resource limits and process-tree cleanup are implemented and qualified. No terminal fallback is provided. See the [extended-run handoff](planning/research/extended-run.md) before resuming P1b or any dependent stage.
+The repository-directory route currently reports `ready: false`, `controls: "not-configured"` and exits 3. `--control-dir PATH` examines only an explicitly supplied directory inside the project; an ordinary directory of controller-like files is rejected as a fake cgroup. Even a real mount is only a candidate until delegation, strict Landlock, namespace/resource limits and process-tree cleanup are implemented and qualified. No terminal fallback is provided. A separate, explicitly permitted user-systemd host API is described in [runtime evidence](planning/research/p1b-runtime.md); the directory probe is not its readiness certificate. See the [extended-run handoff](planning/research/extended-run.md) before resuming P1b or any dependent stage.
 
 ## Coding experience
 
