@@ -2,7 +2,7 @@
 
 Rivet is an independent AI coding-agent platform for Linux, built in Rust. Start with one agent in Solo; use optional native hierarchies when a task needs coordination. Unrivet is a planned optional reverse-engineering mod, maintained separately. Rivet works without it.
 
-**Development snapshot:** bounded P1–P3 profiles are implemented with synthetic-provider tests. No live model, multi-day endurance, browser or native desktop qualification is claimed. The current executable is tied to its source checkout; this is not a portable release or general installation guide. Licensing is pending an owner decision.
+**Development snapshot:** bounded P1–P3 profiles are implemented with synthetic-provider tests. No live model, multi-day endurance, browser or native desktop qualification is claimed. The current executable is tied to its source checkout; this is not a portable release or general installation guide.
 
 ## Try the source checkout
 
@@ -41,4 +41,6 @@ See [verification](planning/research/post-p3-verification.md) for checks reprodu
 
 ## License
 
-No license has been selected or included. Public source visibility does not grant an open-source license. Rivet's intended FOSS licensing remains pending; third-party components retain their own terms. The [license research](planning/research/post-p3-licensing.md) offers options for owner review.
+Except where otherwise noted, Rivet's original source code, documentation and examples are licensed under the **GNU General Public License v3.0 only** (`GPL-3.0-only`). See [LICENSE](LICENSE) for the full terms.
+
+Third-party components retain their own licenses and notices. Rivet is provided without warranty, as described in the license.

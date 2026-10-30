@@ -1,5 +1,8 @@
 # GPL-family licensing decision research
 
+**Owner adoption update:** The owner subsequently instructed applying the recommended GPL-3.0-only license to this repository. [LICENSE](../../LICENSE), README and Cargo metadata now record that choice for Rivet's original code, documentation and examples, except where otherwise noted. Third-party terms remain intact. Official-mod license choices for other repositories are not made by this change. The comparison and pending-adoption language below are preserved as historical research; distribution/compliance questions remain applicable.
+
+
 No license is selected. This comparison is a planning aid for owner/legal review, not license adoption or a legal clearance. No LICENSE/SPDX code headers/package license field were added. The owner's stated goal is that covered distributed derivatives remain open-source; ordinary public visibility does not supply that permission.
 
 ## Options

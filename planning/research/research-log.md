@@ -145,3 +145,10 @@ Initial metadata Git commands used ordinary configuration discovery; no outside 
 No AGENTS.md/guide/source/manifest/lock/license modifications, new feature implementation, outside-repo manual inspection, Unrivet access, installations, live/paid inference or release. Public research only; access failures and moving-version/license limits are in the [source supplement](post-p3-sources.md). Final validation/commits and publication outcome are recorded in the handoff.
 
 Final shell allowance: **82% five-hour remaining**, weekly 60%; usage limits did not require stopping. No push was attempted because fresh native acceptance remains incomplete.
+
+
+## Owner-authorized GPL-3.0-only adoption
+
+The owner explicitly requested applying the license recommended in the post-P3 research and adding it to the bottom of README. Added full unmodified GPLv3 license text from SPDX's license-list-data `text/GPL-3.0-only.txt` (34,674 bytes; SHA-256 `fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0`), `license = "GPL-3.0-only"` in Cargo.toml, and the README license notice/link. Updated contribution guidance, D13/PP08 and the historical licensing research's current-state notice. No other repository, dependency license, contribution agreement or copyright assignment was changed. The GPL appendix's generic “or later” example is unchanged license text; Rivet's README and package expression explicitly choose version 3 only.
+
+Source: https://raw.githubusercontent.com/spdx/license-list-data/main/text/GPL-3.0-only.txt ; identifier/reference: https://spdx.org/licenses/GPL-3.0-only.html . The GNU plaintext URL timed out through the web tool, so the official SPDX source was used. This is a license-text acquisition, not software/tool installation or dependency acquisition. Validation passed: exact SPDX source bytes/hash and license sections 0–17, contained locked offline Cargo metadata reports GPL-3.0-only, 55 local link targets resolve, and git diff --check is clean. Application tests were not rerun for this license/metadata/documentation-only change. Ordinary local commit saves the checkpoint; no push authorized for this change.

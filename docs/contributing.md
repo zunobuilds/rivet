@@ -1,6 +1,6 @@
 # Contributing
 
-Start with the [repository rules](../AGENTS.md), [master plan](../planning/MASTER_IMPLEMENTATION_PLAN.md) and current [verification](../planning/research/post-p3-verification.md). Keep a proposed change bounded and explain its user-visible result, permission effects and evidence. Licensing and contribution terms remain pending owner decision; do not assume a contribution license or copyright assignment.
+Start with the [repository rules](../AGENTS.md), [master plan](../planning/MASTER_IMPLEMENTATION_PLAN.md) and current [verification](../planning/research/post-p3-verification.md). Keep a proposed change bounded and explain its user-visible result, permission effects and evidence. Rivet uses [GPL-3.0-only](../LICENSE). Preserve existing third-party licenses and notices. No separate contributor agreement or copyright assignment has been adopted.
 
 Use the [contained checks](building.md). Add regression coverage for meaningful security/recovery changes. Report ignored native tests, unavailable formatter/Clippy and unrun live checks honestly. Do not weaken isolation, silently acquire dependencies or present synthetic inference as model qualification.
 
