@@ -39,6 +39,10 @@ See [verification](planning/research/post-p3-verification.md) for checks reprodu
 - [Roadmap](docs/roadmap.md): implemented profiles and future qualification.
 - [Planning index](planning/README.md): design history, decisions and research.
 
+## Versioning and releases
+
+Rivet follows [Semantic Versioning 2.0.0](https://semver.org/). See the [versioning policy](docs/versioning.md), [planned v0.1.0-alpha.1 notes](docs/releases/v0.1.0-alpha.1.md) and [release-readiness checklist](docs/release-readiness.md). The pre-release is in preparation and is not yet ready for publication.
+
 ## License
 
 Rivet is licensed under the **GNU General Public License v3.0 only** (`GPL-3.0-only`). See [LICENSE](LICENSE) for the full terms.
