@@ -48,6 +48,10 @@ impl Broker {
         if self.revoked.is_cancelled()||proposal.schema_version!=1||proposal.attempt==0||proposal.descriptor_digest!=crate::tools::git::DESCRIPTOR||proposal.resources!=reviewed_resources||reviewed_resources.is_empty()||expiry<=now||expiry.saturating_sub(now)>3600{return Err(Error::Denied);}
         let id=Uuid::new_v4();self.grants.insert(id,Binding{digest:proposal.digest()?,proposal:proposal.clone(),epoch:self.epoch,expiry});Ok(Grant{id,expiry})
     }
+    pub fn approve_mcp(&mut self,proposal:&ToolProposal,reviewed_resources:&[String],expiry:u64,now:u64)->Result<Grant>{
+        if self.revoked.is_cancelled()||proposal.schema_version!=1||proposal.attempt==0||proposal.descriptor_digest!=crate::mcp::DESCRIPTOR||proposal.resources!=reviewed_resources||reviewed_resources.is_empty()||expiry<=now||expiry.saturating_sub(now)>3600{return Err(Error::Denied);}
+        let id=Uuid::new_v4();self.grants.insert(id,Binding{digest:proposal.digest()?,proposal:proposal.clone(),epoch:self.epoch,expiry});Ok(Grant{id,expiry})
+    }
     #[cfg(test)]
     pub(crate) fn approve_inert(&mut self, proposal: &ToolProposal, expiry: u64) -> Result<Grant> {
         if proposal.schema_version != 1 || proposal.descriptor_digest != "test:inert:v1" { return Err(Error::Denied); }
@@ -79,7 +83,7 @@ impl Broker {
     pub fn approve_inference(&self,config:&crate::config::ProviderConfig,request:&crate::providers::InferRequest,reviewed_digest:&str,expiry:u64,now:u64)->Result<InferencePermit> {
         let digest=crate::tools::sha256(&serde_json::to_vec(request).map_err(|_|Error::Invalid)?);
         if self.revoked.is_cancelled()||self.epoch==0||digest!=reviewed_digest||expiry<=now||expiry.saturating_sub(now)>3600{return Err(Error::Denied);}
-        let endpoint=crate::providers::compatible::endpoint(&config.endpoint)?;
+        let endpoint=crate::providers::validate_endpoint(config)?;
         if endpoint.scheme()=="https" && !request.context.as_ref().is_some_and(|c|c.max_cost_micros>0){return Err(Error::Denied);}
         Ok(InferencePermit{profile:config.profile.clone(),endpoint:config.endpoint.clone(),model:config.model.clone(),digest,epoch:self.epoch,expiry,revoked:self.revoked.clone()})
     }

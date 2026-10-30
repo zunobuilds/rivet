@@ -31,7 +31,7 @@ impl ProcessRequest {
             if path.as_os_str().is_empty() || path.components().any(|c| !matches!(c,Component::Normal(_))) {return Err(Error::Invalid);}
             for component in path.components() {
                 let name=component.as_os_str().to_str().ok_or(Error::Invalid)?;
-                if name.chars().any(char::is_control) || [".git",".rivet-state",".cargo",".rivet.toml","secrets","credentials"].contains(&name) || name.starts_with(".env") {return Err(Error::Denied);}
+                if name.chars().any(char::is_control) || [".git",".rivet-state",".cargo",".rivet.toml","secrets","credentials",".ssh",".gnupg",".aws",".netrc",".git-credentials",".npmrc",".pypirc"].contains(&name) || name.starts_with(".env") {return Err(Error::Denied);}
             }
             size+=text.len(); if size>1024*1024 {return Err(Error::Unsupported);}
         }
@@ -133,14 +133,15 @@ impl Stage {
 impl Drop for Stage{fn drop(&mut self){let _=self.parent.remove_dir_all(&self.name);}}
 /// Invoked by the supervisor only after a committed intent. Projection files are explicit inputs.
 pub(crate) async fn perform(request:ProcessRequest, operation:crate::domain::OperationId, cancel:CancellationToken)->Result<ProcessResult> {
-    perform_inner(request,operation,cancel,None).await
+    perform_inner(request,operation,cancel,None,false).await
 }
 #[derive(Clone,Serialize,Deserialize)]
 pub(crate) struct GitMount{pub relative:PathBuf,pub device:u64,pub inode:u64,pub writable:bool}
 pub(crate) async fn perform_git(request:ProcessRequest,operation:crate::domain::OperationId,cancel:CancellationToken,git:GitMount)->Result<ProcessResult>{
-    perform_inner(request,operation,cancel,Some(git)).await
+    perform_inner(request,operation,cancel,Some(git),false).await
 }
-async fn perform_inner(request:ProcessRequest,operation:crate::domain::OperationId,cancel:CancellationToken,git:Option<GitMount>)->Result<ProcessResult>{
+pub(crate) async fn perform_mcp(request:ProcessRequest,operation:crate::domain::OperationId,cancel:CancellationToken)->Result<ProcessResult>{perform_inner(request,operation,cancel,None,true).await}
+async fn perform_inner(request:ProcessRequest,operation:crate::domain::OperationId,cancel:CancellationToken,git:Option<GitMount>,mcp:bool)->Result<ProcessResult>{
     request.validate()?; if cancel.is_cancelled(){return Err(Error::Interrupted);}
     let projection_digest=crate::tools::sha256(&serde_json::to_vec(&request.files).map_err(|_|Error::Invalid)?);
     let root=Path::new(env!("RIVET_SOURCE_ROOT"));
@@ -171,8 +172,9 @@ async fn perform_inner(request:ProcessRequest,operation:crate::domain::Operation
         "--remount-ro","/","--","/rivet-worker","__worker-bootstrap"]);
     command.arg(env!("RIVET_BUILD_DIGEST"));
     if let Some(git)=&git{command.arg(if git.writable{"--git-rw"}else{"--git-ro"});}
+    if mcp{command.arg("--mcp");}
     command.arg("--");
-    if git.is_some(){command.args(["/rivet-worker","__git-driver"]);}else{command.arg(&request.program).args(&request.args);}
+    if mcp{command.args(["/rivet-worker","__mcp-driver"]);}else if git.is_some(){command.args(["/rivet-worker","__git-driver"]);}else{command.arg(&request.program).args(&request.args);}
     command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let started=Instant::now(); let mut child=command.spawn()?;
     let overflow=CancellationToken::new();
@@ -199,10 +201,10 @@ async fn perform_inner(request:ProcessRequest,operation:crate::domain::Operation
     Ok(ProcessResult{exit_code:status.code(),stdout,stderr,truncated:out_cut||err_cut||out_loss||err_loss,cancelled:interrupted,elapsed_ms:started.elapsed().as_millis() as u64,unit:name,projection_digest})
 }
 /// Single-threaded bootstrap: apply mandatory rules before any untrusted exec.
-pub fn bootstrap(args:&[String],git:Option<bool>)->Result<()> {
+pub fn bootstrap(args:&[String],git:Option<bool>,mcp:bool)->Result<()> {
     use landlock::{Access,AccessFs,AccessNet,Compatible,CompatLevel,PathBeneath,PathFd,Ruleset,RulesetAttr,RulesetCreatedAttr,RulesetStatus,Scope,ABI};
     use std::os::unix::process::CommandExt;
-    let internal=git.is_some()&&args==["/rivet-worker","__git-driver"];
+    let internal=(git.is_some()&&args==["/rivet-worker","__git-driver"])||(mcp&&args==["/rivet-worker","__mcp-driver"]);
     if args.is_empty() || (!args[0].starts_with("/usr/bin/")&&!internal){return Err(Error::Invalid);}
     let descriptors=std::fs::read_dir("/proc/self/fd")?.map(|e|e.map(|e|e.path())).collect::<std::io::Result<Vec<_>>>()?;
     for path in descriptors {
@@ -225,6 +227,7 @@ pub fn bootstrap(args:&[String],git:Option<bool>)->Result<()> {
         let rights=if path=="/dev/random"||path=="/dev/urandom"{AccessFs::ReadFile.into()}else{AccessFs::ReadFile|AccessFs::WriteFile};
         rules=rules.add_rule(PathBeneath::new(PathFd::new(path).map_err(|_|Error::State)?,rights)).map_err(|_|Error::Unsupported)?;
     }
+    if mcp{rules=rules.add_rule(PathBeneath::new(PathFd::new("/rivet-worker").map_err(|_|Error::State)?,AccessFs::ReadFile|AccessFs::Execute)).map_err(|_|Error::Unsupported)?;}
     if let Some(writable)=git{
         rules=rules.add_rule(PathBeneath::new(PathFd::new("/git-metadata").map_err(|_|Error::State)?,AccessFs::ReadFile|AccessFs::ReadDir)).map_err(|_|Error::Unsupported)?;
         rules=rules.add_rule(PathBeneath::new(PathFd::new("/rivet-worker").map_err(|_|Error::State)?,AccessFs::ReadFile|AccessFs::Execute)).map_err(|_|Error::Unsupported)?;

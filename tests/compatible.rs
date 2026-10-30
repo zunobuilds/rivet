@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 fn now()->u64{SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()}
 fn request()->InferRequest {
     InferRequest{schema_version:1,id:RequestId::default(),prompt:String::new(),context:Some(RequestContext{
-        messages:vec![ChatMessage::text(MessageRole::User,"fixture only".into())],tools:vec![FileWorkspace::descriptor()],task:TaskId::default(),actor:ActorId::default(),max_output:1024,max_cost_micros:0,reservation:"fixture-reservation".into()
+        messages:vec![ChatMessage::text(MessageRole::User,"fixture only".into())],tools:vec![FileWorkspace::descriptor()],task:TaskId::default(),actor:ActorId::default(),max_output:1024,max_cost_micros:0,credential_ref:None,reservation:"fixture-reservation".into()
     })}
 }
 fn event(delta:serde_json::Value,finish:serde_json::Value)->String {

@@ -21,13 +21,7 @@ impl Compatible {
 }
 /// Loopback HTTP or explicitly granted HTTPS. No redirect, userinfo, query or fragment.
 pub fn endpoint(value: &str) -> Result<reqwest::Url> {
-    let url = reqwest::Url::parse(value).map_err(|_|Error::Invalid)?;
-    let host = url.host_str().ok_or(Error::Invalid)?.trim_matches(['[',']']);
-    let loopback=host.parse::<std::net::IpAddr>().is_ok_and(|ip|ip.is_loopback());
-    if !(url.scheme()=="https" || (url.scheme()=="http" && loopback)) { return Err(Error::Unsupported); }
-    if !url.username().is_empty() || url.password().is_some() || url.query().is_some() || url.fragment().is_some()
-        || url.path()!="/v1/chat/completions" || url.port_or_known_default().is_none() { return Err(Error::Invalid); }
-    Ok(url)
+    super::http::endpoint(value,"/v1/chat/completions")
 }
 impl ProviderPort for Compatible {
     fn capabilities(&self)->Capabilities {Capabilities{text:true,tool_calls:true,usage:true}}
@@ -52,13 +46,7 @@ impl ProviderPort for Compatible {
 }
 fn wire_name(id:&str,version:u32)->String {format!("{}_v{version}",id.replace([':', '.','-'],"_"))}
 async fn transport(config:ProviderConfig,request:InferRequest,tx:&mpsc::Sender<ProviderEvent>)->std::result::Result<(), &'static str> {
-    let _=rustls::crypto::ring::default_provider().install_default();
-    // Compiled Mozilla roots prevent ambient native certificate/environment discovery.
-    let roots=webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().map(|der|reqwest::Certificate::from_der(der.as_ref()).map_err(|_|"trust-root")).collect::<std::result::Result<Vec<_>,_>>()?;
-    let client=reqwest::Client::builder().tls_certs_only(roots)
-        .no_proxy().redirect(reqwest::redirect::Policy::none()).retry(reqwest::retry::never())
-        .connect_timeout(Duration::from_secs(5)).timeout(Duration::from_secs(60)).connection_verbose(false)
-        .build().map_err(|_|"client-configuration")?;
+    let client=super::http::client()?;
     let context=request.context.as_ref();
     let messages=match context {
         Some(c)=>c.messages.iter().map(|m| {

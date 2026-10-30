@@ -1,3 +1,5 @@
+pub(crate) mod http;
+pub mod native;
 pub mod compatible;
 use crate::domain::{RequestId, OperationId};
 use crate::tools::ToolProposal;
@@ -18,7 +20,7 @@ pub struct ChatMessage {pub role:MessageRole, pub content:String, pub tool_call_
 pub enum MessageRole {System, User, Assistant, Tool}
 impl ChatMessage {pub fn text(role:MessageRole, content:String)->Self {Self{role,content,tool_call_id:None,tool_calls:vec![]}}}
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RequestContext {pub messages:Vec<ChatMessage>, pub tools:Vec<crate::tools::ToolDescriptor>, pub task:crate::domain::TaskId, pub actor:crate::domain::ActorId, pub max_output:u32, pub max_cost_micros:u64, pub reservation:String}
+pub struct RequestContext {pub messages:Vec<ChatMessage>, pub tools:Vec<crate::tools::ToolDescriptor>, pub task:crate::domain::TaskId, pub actor:crate::domain::ActorId, pub max_output:u32, pub max_cost_micros:u64, pub credential_ref:Option<String>, pub reservation:String}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ProviderEvent {
     TextDelta { request: RequestId, text: String },
@@ -61,4 +63,13 @@ pub(crate) fn strict_json(input:&str)->crate::error::Result<serde_json::Value> {
 }
 impl InferRequest {
     pub fn digest(&self)->crate::error::Result<String>{serde_json::to_vec(self).map(|v|crate::tools::sha256(&v)).map_err(|_|crate::error::Error::Invalid)}
+}
+
+pub fn validate_endpoint(config:&crate::config::ProviderConfig)->crate::error::Result<reqwest::Url>{
+    match config.profile.as_str(){
+        "llama.cpp-compatible"=>compatible::endpoint(&config.endpoint),
+        "ollama"=>http::endpoint(&config.endpoint,"/api/chat"),
+        "anthropic"=>http::endpoint(&config.endpoint,"/v1/messages"),
+        _=>Err(crate::error::Error::Unsupported),
+    }
 }

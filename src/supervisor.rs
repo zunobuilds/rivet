@@ -10,6 +10,7 @@ impl Default for Supervisor {
         registry.register(crate::tools::files::FileWorkspace::descriptor()).expect("built-in descriptor is valid");
         registry.register(crate::tools::process::ProcessRequest::descriptor()).expect("built-in descriptor is valid");
         registry.register(crate::tools::git::GitRequest::descriptor()).expect("built-in descriptor is valid");
+        registry.register(crate::mcp::Action::descriptor()).expect("built-in descriptor is valid");
         Self { stop: CancellationToken::new(), tasks: TaskTracker::new(), registry,git_lane:tokio::sync::Mutex::new(()) }
     }
 }
@@ -256,15 +257,30 @@ impl Supervisor {
 
 impl Supervisor {
     pub async fn execute_process(&self,spec:&RunSpec,ledger:&crate::ledger::Ledger,broker:&mut crate::permissions::Broker,proposal:crate::tools::ToolProposal,grant:crate::permissions::Grant)->Result<crate::tools::process::ProcessResult> {
-        use crate::{domain::{ExecutionReceipt,Outcome},ledger::Transition,tools::process::{ProcessRequest,DESCRIPTOR}};
+        self.execute_isolated(spec,ledger,broker,proposal,grant,None).await
+    }
+    pub async fn execute_mcp(&self,spec:&RunSpec,ledger:&crate::ledger::Ledger,broker:&mut crate::permissions::Broker,workspace:std::sync::Arc<crate::mcp::Workspace>,proposal:crate::tools::ToolProposal,grant:crate::permissions::Grant)->Result<crate::mcp::McpResult>{
+        let result=self.execute_isolated(spec,ledger,broker,proposal,grant,Some(workspace)).await?;
+        if result.exit_code!=Some(0)||result.cancelled||result.truncated{return Err(Error::Recovery);}
+        serde_json::from_str(&result.stdout).map_err(|_|Error::State)
+    }
+    async fn execute_isolated(&self,spec:&RunSpec,ledger:&crate::ledger::Ledger,broker:&mut crate::permissions::Broker,proposal:crate::tools::ToolProposal,grant:crate::permissions::Grant,mcp:Option<std::sync::Arc<crate::mcp::Workspace>>)->Result<crate::tools::process::ProcessResult>{
+        use crate::{domain::{ExecutionReceipt,Outcome},ledger::Transition,tools::process::ProcessRequest};
+        let is_mcp=mcp.is_some();let expected=if is_mcp{crate::mcp::DESCRIPTOR}else{crate::tools::process::DESCRIPTOR};
         self.admit(spec)?;self.check_cancelled()?;
-        let descriptor=self.registry.get("rivet:process-check",1).ok_or(Error::Unsupported)?;
+        let descriptor=self.registry.get(if is_mcp{"rivet:mcp"}else{"rivet:process-check"},1).ok_or(Error::Unsupported)?;
         if descriptor.build_digest!=proposal.descriptor_digest{return Err(Error::Denied);}
         let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_|Error::State)?.as_secs();
-        if proposal.descriptor_digest!=DESCRIPTOR || spec.project!=ledger.project_id() || spec.permission_epoch!=broker.epoch() || now>=spec.deadline{return Err(Error::Denied);}
+        if proposal.descriptor_digest!=expected || spec.project!=ledger.project_id() || spec.permission_epoch!=broker.epoch() || now>=spec.deadline{return Err(Error::Denied);}
         ledger.transition(0,Transition::Propose{run:spec.run,proposal:proposal.clone()}).await?;
-        let request=serde_json::from_value::<ProcessRequest>(proposal.arguments.clone()).map_err(|_|Error::Invalid);
-        let validation=request.and_then(|r|{r.validate()?;if r.resources(spec.project)!=proposal.resources || now+(r.timeout_ms+999)/1000>spec.deadline{return Err(Error::Denied);}Ok(r)});
+        let validation=if let Some(workspace)=mcp {
+            (||{if workspace.identity()!=ledger.workspace_identity(){return Err(Error::Denied);}
+                let action:crate::mcp::Action=serde_json::from_value(proposal.arguments.clone()).map_err(|_|Error::Invalid)?;
+                if workspace.resources(&action)?!=proposal.resources{return Err(Error::Denied);}workspace.request(action)
+            })()
+        }else{
+            serde_json::from_value::<ProcessRequest>(proposal.arguments.clone()).map_err(|_|Error::Invalid).and_then(|r|{r.validate()?;if r.resources(spec.project)!=proposal.resources || now+(r.timeout_ms+999)/1000>spec.deadline{return Err(Error::Denied);}Ok(r)})
+        };
         let request=match validation{Ok(r)=>r,Err(e)=>{ledger.transition(0,Transition::Deny{operation:proposal.operation}).await?;return Err(e);}};
         let reference=grant.reference();let expiry=grant.expiry();
         if let Err(e)=broker.consume(grant,&proposal,now){ledger.transition(0,Transition::Deny{operation:proposal.operation}).await?;return Err(e);}
@@ -274,16 +290,16 @@ impl Supervisor {
         ledger.transition(2,Transition::Dispatched{operation:proposal.operation}).await?;
         let stop=self.stop.child_token();let operation=proposal.operation;let ledger_stop=ledger.cancellation();let revoked=broker.revocation();
         let mut request=request;
-        request.timeout_ms=request.timeout_ms.min(expiry.saturating_sub(now)*1000);
+        request.timeout_ms=request.timeout_ms.min(expiry.saturating_sub(now)*1000).min(spec.deadline.saturating_sub(now)*1000);
         let effect=self.tasks.spawn(async move{
-            let work=crate::tools::process::perform(request,operation,stop.clone());tokio::pin!(work);
+            let work=async {if is_mcp{crate::tools::process::perform_mcp(request,operation,stop.clone()).await}else{crate::tools::process::perform(request,operation,stop.clone()).await}};tokio::pin!(work);
             tokio::select!{biased;
                 _=ledger_stop.cancelled()=>{stop.cancel();work.await},
                 _=revoked.cancelled()=>{stop.cancel();work.await},
                 result=&mut work=>result,
             }
         }).await.map_err(|_|Error::State)?;
-        let outcome=match &effect{Ok(r) if r.cancelled=>Outcome::Cancelled,Ok(r) if r.exit_code==Some(0)&&!r.truncated=>Outcome::Succeeded,Ok(_)=>Outcome::Failed,Err(_)=>Outcome::Unknown};
+        let outcome=match &effect{Ok(r) if r.cancelled=>Outcome::Cancelled,Ok(r) if r.exit_code==Some(0)&&!r.truncated=>Outcome::Succeeded,Ok(_) if is_mcp=>Outcome::Unknown,Ok(_)=>Outcome::Failed,Err(_)=>Outcome::Unknown};
         let receipt=ExecutionReceipt{schema_version:1,operation,attempt:proposal.attempt,outcome,exit_code:effect.as_ref().ok().and_then(|r|r.exit_code),error:effect.as_ref().err().map(|e|e.kind().into()),artifacts:vec![],before_revision:None,after_revision:effect.as_ref().ok().map(|r|r.projection_digest.clone()),redacted_output:effect.as_ref().ok().map_or_else(String::new,|r|format!("stdout_sha256={};stderr_sha256={};truncated={}",crate::tools::sha256(r.stdout.as_bytes()),crate::tools::sha256(r.stderr.as_bytes()),r.truncated))};
         let terminal=matches!(receipt.outcome,Outcome::Succeeded|Outcome::Failed);
         ledger.transition(3,Transition::Receipt{receipt}).await?;

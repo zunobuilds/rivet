@@ -12,8 +12,10 @@ pub struct ProviderConfig { pub profile: String, pub endpoint: String, pub model
 pub struct Config {
     pub schema_version: u32,
     #[serde(default)] pub provider: Option<ProviderConfig>,
+    #[serde(default)] pub mcp: Vec<crate::mcp::Server>,
+    #[serde(default)] pub skills: Vec<crate::skills::Skill>,
 }
-impl Default for Config { fn default() -> Self { Self { schema_version: 1, provider: None } } }
+impl Default for Config { fn default() -> Self { Self { schema_version: 1, provider: None, mcp:vec![],skills:vec![] } } }
 impl Config {
     pub fn parse(input: &str) -> Result<Self> {
         let config: Self = toml::from_str(input).map_err(|_| Error::Invalid)?;
@@ -21,6 +23,7 @@ impl Config {
         if let Some(p) = &config.provider {
             if p.profile.is_empty() || p.endpoint.is_empty() || p.model.is_empty() { return Err(Error::Invalid); }
         }
+        crate::skills::validate(&config.skills)?;
         Ok(config)
     }
     pub fn provider_status(&self) -> &'static str {

@@ -77,7 +77,7 @@ impl FileWorkspace {
             let Component::Normal(component) = component else { return Err(Error::Invalid); };
             let name = component.to_str().ok_or(Error::Invalid)?;
             if name.chars().any(char::is_control) { return Err(Error::Invalid); }
-            if [".git", ".rivet-state", ".build", ".cargo", ".rivet.toml", "secrets", "credentials"].contains(&name)
+            if [".git", ".rivet-state", ".build", ".cargo", ".rivet.toml", "secrets", "credentials", ".ssh", ".gnupg", ".aws", ".netrc", ".git-credentials", ".npmrc", ".pypirc"].contains(&name)
                 || name.starts_with(".env") || name.starts_with(".rivet-edit-") { return Err(Error::Denied); }
         }
         Ok(path)

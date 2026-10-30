@@ -68,3 +68,5 @@ Final checkpoint review: revised README/planning-index/handoff local files and a
 The owner subsequently authorized the narrow user-systemd/cgroup investigation and temporary-unit writes. The old delegation blocker above is resolved; [P1b runtime qualification](p1b-runtime.md) records actual enforcement, namespace/Landlock/process/Git fixtures and the bounded P1b acceptance checkpoint. P1c is next in the approved sequence. Historical claims above are preserved as checkpoint evidence, not the current blocker.
 
 P1c continuation: [Solo implementation evidence](p1c-solo.md) records the configured compatible transport, reviewed bounded loop, durable budgets, migration backup and actual synthetic/native tests. The next authorized work is P1d; P2/P3 prerequisites and the real 72-hour gate remain.
+
+P1d continuation: [adapter/MCP/skill evidence](p1d-adapters.md) records synthetic native profiles and real sandboxed stdio MCP plus pinned skill permission tests. P2a is next; no P2/P3 acceptance or 72-hour claim.

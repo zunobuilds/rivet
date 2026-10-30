@@ -75,7 +75,7 @@ async fn no_clobber_bounds_and_ambiguous_patch_fail_without_file_changes() {
 async fn protected_paths_links_special_files_and_traversal_are_denied() {
     use std::os::unix::fs::symlink;
     let mut f = Fixture::new().await;
-    for name in ["../outside","private-state/ledger.sqlite",".rivet-state/x",".git/config",".env","secrets/key",".cargo/config.toml"] {
+    for name in ["../outside","private-state/ledger.sqlite",".rivet-state/x",".git/config",".env","secrets/key",".cargo/config.toml",".ssh/id_rsa",".aws/credentials",".netrc"] {
         assert!(f.files.resources(&FileAction::Read {path:path(name)}).is_err());
     }
     fs::write(f.temp.path().join("safe"),"safe").unwrap();

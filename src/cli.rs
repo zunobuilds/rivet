@@ -8,7 +8,7 @@ pub struct Cli { #[command(subcommand)] pub command: Command }
 #[derive(Subcommand)]
 pub enum Command {
     /// A provider/tool request executes only after exact interactive review.
-    Chat {#[arg(long)] task:String, #[arg(long)] config:Option<PathBuf>, #[arg(long)] state_dir:Option<PathBuf>, #[arg(long)] session:Option<String>, #[arg(long,default_value_t=100)] steps:u32, #[arg(long,default_value_t=3600)] deadline_seconds:u64, #[arg(long,default_value_t=65536)] token_budget:u64, #[arg(long,default_value_t=0)] spend_ceiling_micros:u64, #[arg(long,default_value_t=0)] request_cost_micros:u64},
+    Chat {#[arg(long)] task:String, #[arg(long)] config:Option<PathBuf>, #[arg(long)] state_dir:Option<PathBuf>, #[arg(long)] session:Option<String>, #[arg(long,default_value_t=100)] steps:u32, #[arg(long,default_value_t=3600)] deadline_seconds:u64, #[arg(long,default_value_t=65536)] token_budget:u64, #[arg(long,default_value_t=0)] spend_ceiling_micros:u64, #[arg(long,default_value_t=0)] request_cost_micros:u64, #[arg(long)] ephemeral_key_stdin:bool},
     /// Review/create the source-only Rust binary recipe; no build/install is run.
     Project {#[command(subcommand)] command:ProjectCommand},
     /// Check runtime-worker prerequisites without searching host paths or launching commands.
@@ -37,11 +37,14 @@ fn output(value: serde_json::Value, structured: bool) {
 }
 pub async fn execute(cli: Cli, project: &Project) -> Result<()> {
     match cli.command {
-        Command::Chat{task,config,state_dir,session,steps,deadline_seconds,token_budget,spend_ceiling_micros,request_cost_micros}=>{
-            let provider=project.config(config.as_deref())?.provider.ok_or(crate::error::Error::Unsupported)?;
+        Command::Chat{task,config,state_dir,session,steps,deadline_seconds,token_budget,spend_ceiling_micros,request_cost_micros,ephemeral_key_stdin}=>{
+            let configuration=project.config(config.as_deref())?;
+            let provider=configuration.provider.ok_or(crate::error::Error::Unsupported)?;
             let session=match session{Some(id)=>Some(SessionId(uuid::Uuid::parse_str(&id).map_err(|_|crate::error::Error::Invalid)?)),None=>None};
+            if ephemeral_key_stdin&&provider.profile!="anthropic"{return Err(crate::error::Error::Invalid);}
+            let credential=if ephemeral_key_stdin{Some(crate::terminal::read_secret().await?)}else{None};
             let mut terminal=crate::terminal::Terminal::new();
-            let report=crate::chat::run(project,state(&state_dir),provider,crate::chat::ChatOptions{session,task,steps,deadline_seconds,budget:crate::budget::BudgetLimits{tokens:token_budget,requests:steps,cost_micros:spend_ceiling_micros},request_cost_micros},&mut terminal,tokio_util::sync::CancellationToken::new()).await?;
+            let report=crate::chat::run(project,state(&state_dir),provider,crate::chat::ChatOptions{session,task,steps,deadline_seconds,budget:crate::budget::BudgetLimits{tokens:token_budget,requests:steps,cost_micros:spend_ceiling_micros},request_cost_micros,credential,mcp:configuration.mcp,skills:configuration.skills},&mut terminal,tokio_util::sync::CancellationToken::new()).await?;
             output(serde_json::to_value(report).map_err(|_|crate::error::Error::State)?,true);
         },
         Command::Project{command:ProjectCommand::New{name,approve}}=>{

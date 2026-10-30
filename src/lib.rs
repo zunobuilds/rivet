@@ -19,3 +19,5 @@ pub mod context;
 pub mod chat;
 pub mod scaffold;
 pub mod terminal;
+pub mod mcp;
+pub mod skills;

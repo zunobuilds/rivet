@@ -32,3 +32,18 @@ impl Reviewer for Terminal {
         })
     }
 }
+
+/// Explicit non-terminal ephemeral key entry: no argv, environment, config or file lookup.
+pub async fn read_secret()->Result<std::sync::Arc<crate::providers::native::EphemeralSecret>>{
+    use std::io::IsTerminal;
+    if std::io::stdin().is_terminal(){return Err(Error::Denied);}
+    let (tx,rx)=tokio::sync::oneshot::channel();
+    std::thread::spawn(move||{
+        let mut line=String::new();
+        let result=std::io::stdin().lock().take(4097).read_line(&mut line).map_err(|_|Error::Invalid).and_then(|_|{
+            if line.len()>4096{return Err(Error::Invalid);}
+            while line.ends_with(['\n','\r']){line.pop();}
+            crate::providers::native::EphemeralSecret::new(line).map(std::sync::Arc::new)
+        });let _=tx.send(result);
+    });rx.await.map_err(|_|Error::State)?
+}
