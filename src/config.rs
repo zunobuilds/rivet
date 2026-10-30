@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{path::{Component, Path, PathBuf}};
 use cap_std::fs::MetadataExt as CapMetadataExt;
 
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderConfig { pub profile: String, pub endpoint: String, pub model: String }
 #[derive(Debug, Deserialize, Serialize)]

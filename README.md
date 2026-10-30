@@ -1,8 +1,8 @@
 # Rivet
 
-Rivet is a standalone AI coding-agent platform under development. Its Rust P1a foundation provides model-free administration, local SQLite sessions, and tested permission and supervisor contracts. Coding inference and the broader platform remain planned, with useful pre-1.0 milestones leading to a mature Linux release.
+Rivet is a standalone AI coding-agent platform under development. Its Rust foundation provides model-free administration, local SQLite sessions, reviewed Solo coding through a configured compatible endpoint, and bounded tool APIs. The broader platform remains planned, with useful pre-1.0 milestones leading to a mature Linux release.
 
-**Status: P1a administration and P1b supervised tools implemented; no coding inference loop yet.** Administrative commands work without a provider, model, account or network connection. A supervised file-operation library is tested in contained fixtures; it is not exposed as a CLI coding loop. The trusted Rust API supports isolated checks through user-systemd/bubblewrap/Landlock and scoped local Git. Native fixtures verify patch/check/diff/commit and denied mutations; see [runtime evidence](planning/research/p1b-runtime.md) for the tested host and limits. Later product capabilities described below remain **planned**. Format and Clippy qualification could not run because the installed toolchain lacks those commands; see the [P1a evidence](planning/research/p1a-evidence.md). No installer, release or benchmark is provided.
+**Status: P1a–P1c implemented on the tested host; synthetic Solo coding qualified, no live inference tested.** Administrative commands work without a provider, model, account or network connection. The reviewed Solo loop uses explicit configuration and per-request approvals; file/process/local Git tools share one broker, supervisor and ledger. See [P1b runtime evidence](planning/research/p1b-runtime.md) and [P1c Solo evidence](planning/research/p1c-solo.md) for the bounded profiles and limitations. Later product capabilities described below remain **planned**. Rustfmt and Clippy are unavailable in the installed toolchain. No installer, release or benchmark is provided.
 
 Rivet is intended to be free and open-source software (FOSS), but no license has been selected or included. The FOSS goal is not a present license grant.
 
@@ -28,7 +28,7 @@ Rivet is intended to be free and open-source software (FOSS), but no license has
 | --- | --- |
 | Product definition | Recorded in the [project brief](planning/RIVET_PROJECT_BRIEF.md), dated 30 October 2026. |
 | Repository guidance | [AGENTS.md](AGENTS.md) defines work boundaries; the [documentation guide](GITHUB_DOCUMENTATION_GUIDE.md) defines documentation practices. |
-| Foundation | Runnable administrative CLI, schema-v1 ledger and sessions, plus supervised file, isolated process and local Git APIs. No real provider or CLI coding loop. |
+| Foundation | Administrative CLI, schema-v2 ledger/budgets/sessions, reviewed compatible-provider Solo loop and supervised file/process/local Git APIs. Synthetic endpoint qualification only. |
 | Source build | Rust 1.99.1, installed GCC and bubblewrap; contained developer build route below. No installer. |
 | Testing | Deterministic offline unit/integration and build-containment checks; no broad platform qualification, CI or performance results. |
 | Licensing | Undecided; no license file is present. |
@@ -45,7 +45,7 @@ scripts/cargo-contained offline run --locked --offline -- status --json
 scripts/cargo-contained offline run --locked --offline -- config check --json
 ```
 
-With no config or state, status reports `provider: "absent"`, `state: "missing"` and `execution_available: false`. Read-only commands do not initialize state. The current directory selects the project root; config is `.rivet.toml` there, without parent/home discovery. A missing default config is valid. An explicit `config check --config PATH` must exist inside that project. This P1a build restricts project roots to this checkout (or its `/work` sandbox mount), including contained fixtures.
+With no config or state, status reports `provider: "absent"`, `state: "missing"` and `execution_available: false`. Read-only commands do not initialize state. The current directory selects the project root; config is `.rivet.toml` there, without parent/home discovery. A missing default config is valid. An explicit `config check --config PATH` must exist inside that project. This source build restricts project roots to this checkout (or its `/work` sandbox mount), including contained fixtures.
 
 Only these explicit mutations create project-local state and sessions:
 
@@ -55,9 +55,13 @@ scripts/cargo-contained offline run --locked --offline -- session new
 scripts/cargo-contained offline run --locked --offline -- session list --json
 ```
 
-State defaults to `.rivet-state/`; `status`, `state init` and session commands accept `--state-dir PATH` inside the project. State roots must be owner-only directories without links. Status/list refuse busy state or WAL/recovery remnants; P1a supplies no recovery command. Help/version, config check, status and session list are read-only. Exit classes are 0 success, 2 invalid input/config, 3 unsupported/not-ready capability, 4 state/lock/I/O failure, and 130 interruption.
+State defaults to `.rivet-state/`; `status`, `state init` and session commands accept `--state-dir PATH` inside the project. State roots must be owner-only directories without links. Status/list refuse busy state or WAL/recovery remnants; No recovery command is available yet. Help/version, config check, status and session list are read-only. Exit classes are 0 success, 2 invalid input/config, 3 unsupported/not-ready capability, 4 state/lock/I/O failure, and 130 interruption.
 
-A minimal optional `.rivet.toml` contains `schema_version = 1`. The optional `[provider]` table accepts `profile`, `endpoint` and `model` strings. It is syntax only: status reports `configured-unverified`, with real adapters/execution unavailable. Unknown fields or schema versions fail. Do not store keys in configuration; P1a has no credential input or keyring backend.
+A minimal optional `.rivet.toml` contains `schema_version = 1`. The optional `[provider]` table accepts `profile`, `endpoint` and `model` strings. Status reports `configured-unverified`; configuration checks never contact an endpoint. The first working profile is `llama.cpp-compatible`. Unknown fields or schema versions fail. Do not store keys in configuration; no keyring backend or authenticated provider profile is qualified yet.
+
+For an already running endpoint that you separately authorize, configure the exact profile, endpoint ending in `/v1/chat/completions` and model. `rivet chat --task TEXT` (the built binary at `.build/target/debug/rivet`) asks for digest-bound review of every inference/data transfer and tool operation. No endpoint is contacted just by configuring it. This repository's implementation tests used synthetic servers only. Defaults are 100 total inference/tool steps, a 3600-second deadline and 65536 token admission units; `--steps`, `--deadline-seconds` and `--token-budget` lower/change those bounds. Remote HTTPS additionally requires positive `--spend-ceiling-micros` and `--request-cost-micros`; these are explicit conservative reservations, not provider price estimates. There is no automatic retry or fallback.
+
+Continue with `chat --session UUID --task TEXT` only after quiescent completed work; unresolved effects/usage require future recovery. Context/transcripts are not persisted by default; continuation supplies redacted revision references. `project new NAME` previews a fixed Rust source recipe; passing its printed digest as `--approve DIGEST` creates new files without installing, building or executing them.
 
 Run checks after fetching:
 

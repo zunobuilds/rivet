@@ -111,3 +111,10 @@ P0.6 raw JSON metadata is retained under root `.research-local/p06-*` only as sc
 | --- | --- | --- |
 | S66 | SQLite authors: [URI parameters](https://www.sqlite.org/uri.html), [open flags](https://www.sqlite.org/c3ref/open.html) | mode=ro refuses creation; immutable bypasses locking/change detection and must never be used for a changing database. P1a immutable inspection therefore requires the existing cooperative lock, verified quiescence and refusal of WAL/recovery remnants; later live status is supervisor-mediated. Explicit URI/read-only/no-follow flags and root capability are required, not arbitrary user-supplied URI parameters. No actual database opened in P0.6. |
 | S67 | Mike Farah: [yq upstream](https://github.com/mikefarah/yq), [license](https://raw.githubusercontent.com/mikefarah/yq/master/LICENSE) | MIT text and upstream identity verified for the selected multi-format CLI family. Exact artifact version, format behavior, release provenance and footprint remain P6 checks; do not confuse this project with other yq implementations or imply it is installed. |
+
+
+## P1c implementation source qualification
+
+| ID | Publisher and source | Actual evidence and limit |
+| --- | --- | --- |
+| S68 | Pinned crates.io source archives: reqwest 0.13.5, rustls 0.23.46 and webpki-root-certs 1.0.11, acquired through the contained fetch route | Cargo.lock SHA-256 archive checks pass. Reqwest ClientBuilder source confirms no_proxy, redirect none, retry never and tls_certs_only; default platform verifier would read host trust paths. Reuse compiled Mozilla root certificates (CDLA-Permissive-2.0) via exact promoted transitive dependency to keep host trust files hidden. Original reqwest/rustls feature decisions retained; ring initialized explicitly. No live HTTPS request or global certificate discovery performed. See [Solo evidence](p1c-solo.md). |

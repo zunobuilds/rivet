@@ -6,7 +6,7 @@ rust-version = "1.99.1"
 publish = false
 
 [dependencies]
-tokio = { version = "=1.54.1", default-features = false, features = ["rt-multi-thread", "macros", "sync", "time", "signal", "process", "io-util"] }
+tokio = { version = "=1.54.1", default-features = false, features = ["rt-multi-thread", "macros", "sync", "time", "signal", "process", "io-util", "net"] }
 tokio-util = { version = "=0.7.20", default-features = false, features = ["rt"] }
 clap = { version = "=4.6.7", features = ["derive"] }
 serde = { version = "=1.0.229", features = ["derive"] }
@@ -18,6 +18,9 @@ cap-std = "=4.0.3"
 # Already-resolved safe syscall wrapper: atomic no-clobber rename and filesystem identity.
 landlock = "=0.4.7"
 tracing = "=0.1.44"
+reqwest = { version = "=0.13.5", default-features = false, features = ["json", "stream", "rustls-no-provider"] }
+webpki-root-certs = "=1.0.11"
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring", "tls12"] }
 rustix = { version = "=1.1.6", default-features = false, features = ["std", "fs"] }
 thiserror = "=2.0.21"
 uuid = { version = "=1.29.0", features = ["v4", "serde"] }

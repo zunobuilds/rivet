@@ -80,7 +80,7 @@ async fn locks_remnants_newer_schema_and_unsafe_paths_fail_closed() {
     let before = snapshot(root.path()); assert!(matches!(ledger::inspect(&project, state), Err(rivet::error::Error::Recovery)));
     assert!(snapshot(root.path()) == before, "filesystem snapshot changed"); fs::remove_file(root.path().join("state/ledger.sqlite-wal")).unwrap();
     let db = rusqlite::Connection::open(root.path().join("state/ledger.sqlite")).unwrap();
-    db.execute("UPDATE meta SET schema_version=2", []).unwrap(); drop(db);
+    db.execute("UPDATE meta SET schema_version=999", []).unwrap(); drop(db);
     let before = snapshot(root.path()); assert!(matches!(Ledger::open(&project, state), Err(rivet::error::Error::State)));
     assert!(matches!(ledger::inspect(&project, state), Err(rivet::error::Error::State))); assert!(snapshot(root.path()) == before, "filesystem snapshot changed");
     symlink("state", root.path().join("linked")).unwrap();
@@ -167,4 +167,18 @@ fn worker_preflight_denies_absent_and_fake_delegation_without_effects() {
     assert_eq!(value["controls"],"not-cgroup-v2");
     assert!(snapshot(root.path()) == before);
     assert_eq!(cli(root.path(), &["sandbox","check","--control-dir","../outside"]).status.code(),Some(2));
+}
+
+#[test]
+fn source_recipe_requires_exact_review_preserves_existing_and_never_executes(){
+    let root=fixture();
+    let preview=cli(root.path(),&["project","new","example"]);assert!(preview.status.success());
+    let value:serde_json::Value=serde_json::from_slice(&preview.stdout).unwrap();assert_eq!(value["created"],false);assert!(!root.path().join("example").exists());
+    let digest=value["review_digest"].as_str().unwrap();
+    assert!(!cli(root.path(),&["project","new","example","--approve","wrong"]).status.success());assert!(!root.path().join("example").exists());
+    assert!(cli(root.path(),&["project","new","example","--approve",digest]).status.success());
+    assert!(root.path().join("example/src/main.rs").is_file());assert!(!root.path().join("example/target").exists());assert!(!root.path().join("example/Cargo.lock").exists());
+    let before=fs::read(root.path().join("example/Cargo.toml")).unwrap();assert!(!cli(root.path(),&["project","new","example","--approve",digest]).status.success());assert_eq!(fs::read(root.path().join("example/Cargo.toml")).unwrap(),before);
+    assert!(!cli(root.path(),&["project","new","../escape"]).status.success());
+    assert!(!cli(root.path(),&["chat","--task","no provider selected"]).status.success());assert!(!root.path().join(".rivet-state").exists());
 }

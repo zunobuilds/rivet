@@ -3,10 +3,14 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 use serde_json::json;
 #[derive(Parser)]
-#[command(version=concat!(env!("CARGO_PKG_VERSION"), " build ", env!("RIVET_BUILD_DIGEST")), about = "Rivet P1a model-free administration")]
+#[command(version=concat!(env!("CARGO_PKG_VERSION"), " build ", env!("RIVET_BUILD_DIGEST")), about = "Rivet administration and reviewed Solo coding")]
 pub struct Cli { #[command(subcommand)] pub command: Command }
 #[derive(Subcommand)]
 pub enum Command {
+    /// A provider/tool request executes only after exact interactive review.
+    Chat {#[arg(long)] task:String, #[arg(long)] config:Option<PathBuf>, #[arg(long)] state_dir:Option<PathBuf>, #[arg(long)] session:Option<String>, #[arg(long,default_value_t=100)] steps:u32, #[arg(long,default_value_t=3600)] deadline_seconds:u64, #[arg(long,default_value_t=65536)] token_budget:u64, #[arg(long,default_value_t=0)] spend_ceiling_micros:u64, #[arg(long,default_value_t=0)] request_cost_micros:u64},
+    /// Review/create the source-only Rust binary recipe; no build/install is run.
+    Project {#[command(subcommand)] command:ProjectCommand},
     /// Check runtime-worker prerequisites without searching host paths or launching commands.
     Sandbox { #[command(subcommand)] command: SandboxCommand },
     Config { #[command(subcommand)] command: ConfigCommand },
@@ -14,6 +18,8 @@ pub enum Command {
     State { #[command(subcommand)] command: StateCommand },
     Session { #[command(subcommand)] command: SessionCommand },
 }
+#[derive(Subcommand)]
+pub enum ProjectCommand { New {name:String, #[arg(long)] approve:Option<String>} }
 #[derive(Subcommand)]
 pub enum SandboxCommand { Check { #[arg(long)] control_dir: Option<PathBuf>, #[arg(long)] json: bool } }
 #[derive(Subcommand)]
@@ -31,6 +37,18 @@ fn output(value: serde_json::Value, structured: bool) {
 }
 pub async fn execute(cli: Cli, project: &Project) -> Result<()> {
     match cli.command {
+        Command::Chat{task,config,state_dir,session,steps,deadline_seconds,token_budget,spend_ceiling_micros,request_cost_micros}=>{
+            let provider=project.config(config.as_deref())?.provider.ok_or(crate::error::Error::Unsupported)?;
+            let session=match session{Some(id)=>Some(SessionId(uuid::Uuid::parse_str(&id).map_err(|_|crate::error::Error::Invalid)?)),None=>None};
+            let mut terminal=crate::terminal::Terminal::new();
+            let report=crate::chat::run(project,state(&state_dir),provider,crate::chat::ChatOptions{session,task,steps,deadline_seconds,budget:crate::budget::BudgetLimits{tokens:token_budget,requests:steps,cost_micros:spend_ceiling_micros},request_cost_micros},&mut terminal,tokio_util::sync::CancellationToken::new()).await?;
+            output(serde_json::to_value(report).map_err(|_|crate::error::Error::State)?,true);
+        },
+        Command::Project{command:ProjectCommand::New{name,approve}}=>{
+            let recipe=crate::scaffold::recipe(&name)?;let digest=crate::scaffold::digest(&recipe)?;
+            if let Some(reviewed)=approve{crate::scaffold::create(project,&name,&reviewed)?;output(json!({"created":name,"recipe_digest":digest,"executed":false}),true);}
+            else{output(json!({"recipe":"rust-bin","name":name,"files":recipe,"review_digest":digest,"created":false,"executed":false}),true);}
+        },
         Command::Sandbox { command: SandboxCommand::Check { control_dir, json } } => {
             let result = crate::sandbox::preflight(project, control_dir.as_deref())?;
             let ready = result.ready;
@@ -44,7 +62,7 @@ pub async fn execute(cli: Cli, project: &Project) -> Result<()> {
         Command::Status { state_dir, json } => {
             let config = project.config(None)?;
             let inspection = ledger::inspect(project, state(&state_dir))?;
-            output(json!({"schema_version":1,"state":inspection.state,"sqlite_version":inspection.sqlite_version,"provider":config.provider_status(),"adapters_available":false,"execution_available":false}), json);
+            output(json!({"schema_version":1,"state":inspection.state,"sqlite_version":inspection.sqlite_version,"provider":config.provider_status(),"adapters_available":true,"execution_available":false}), json);
         },
         Command::State { command: StateCommand::Init { state_dir } } => {
             project.config(None)?;

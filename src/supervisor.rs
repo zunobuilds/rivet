@@ -50,7 +50,7 @@ mod tests {
         for mode in [Mode::Pair,Mode::Crew,Mode::Fleet,Mode::Mesh,Mode::Adaptive] { spec.mode = mode; assert!(matches!(spec.validate(), Err(Error::Unsupported))); }
         let supervisor = Supervisor::default();
         let started = Arc::new(AtomicUsize::new(0)); let (tx,_rx) = mpsc::channel(1);
-        assert!(matches!(supervisor.drive(&spec,Fake {proposal:None,started:started.clone(),closed:Arc::new(AtomicUsize::new(0))},InferRequest {schema_version:1,id:RequestId::default(),prompt:"must not start".into()},tx),Err(Error::Unsupported)));
+        assert!(matches!(supervisor.drive(&spec,Fake {proposal:None,started:started.clone(),closed:Arc::new(AtomicUsize::new(0))},InferRequest {schema_version:1,id:RequestId::default(),prompt:"must not start".into(),context:None},tx),Err(Error::Unsupported)));
         assert_eq!(started.load(Ordering::SeqCst),0);
         let descriptor = ToolDescriptor { id:"test:inert".into(),version:1,build_digest:"v1".into(),input_schema:"{}".into(),output_limit:64,effect:EffectClass::Inert,permissions:vec![],platform:"test".into(),cancellable:true,reconcilable:true };
         let mut registry = Registry::default(); registry.register(descriptor.clone()).unwrap(); assert!(registry.register(descriptor.clone()).is_err()); assert_eq!(registry.get("test:inert",1),Some(&descriptor));
@@ -74,7 +74,7 @@ mod tests {
         fn infer(&self, request: InferRequest, cancel: CancellationToken) -> mpsc::Receiver<ProviderEvent> {
             let (tx,rx) = mpsc::channel(1); let proposal = self.proposal.clone(); let started = self.started.clone(); let closed = self.closed.clone();
             tokio::spawn(async move {
-                if let Some(proposal) = proposal { let _ = tx.send(ProviderEvent::ToolCallComplete { request:request.id, proposal }).await; }
+                if let Some(proposal) = proposal { let _ = tx.send(ProviderEvent::ToolCallComplete { request:request.id, proposal, wire_id:None }).await; }
                 started.store(1,Ordering::SeqCst); cancel.cancelled().await; drop(tx); closed.store(1,Ordering::SeqCst);
             }); rx
         }
@@ -86,7 +86,7 @@ mod tests {
             let supervisor = Supervisor::default(); let (tx,_rx) = mpsc::channel(1);
             if saturated { tx.send(ProviderEvent::Finish {request:RequestId::default(),reason:"occupied".into()}).await.unwrap(); }
             let started = Arc::new(AtomicUsize::new(0)); let closed = Arc::new(AtomicUsize::new(0));
-            supervisor.drive(&spec(),Fake {proposal:saturated.then(proposal),started:started.clone(),closed:closed.clone()}, InferRequest {schema_version:1,id:RequestId::default(),prompt:"fixture".into()},tx).unwrap();
+            supervisor.drive(&spec(),Fake {proposal:saturated.then(proposal),started:started.clone(),closed:closed.clone()}, InferRequest {schema_version:1,id:RequestId::default(),prompt:"fixture".into(),context:None},tx).unwrap();
             await_count(&started).await;
             tokio::time::timeout(Duration::from_secs(2),supervisor.shutdown()).await.unwrap(); await_count(&closed).await;
             assert!(supervisor.check_cancelled().is_err());
@@ -101,7 +101,7 @@ mod tests {
         ledger.transition(0,Transition::RootTask {session:spec.session,run:spec.run,task:p.task,actor:p.actor}).await.unwrap();
         let supervisor = Supervisor::default(); supervisor.admit(&spec).unwrap();
         let (tx,mut rx) = mpsc::channel(1); let effects = AtomicUsize::new(0);
-        supervisor.drive(&spec,Fake {proposal:Some(p.clone()),started:Arc::new(AtomicUsize::new(0)),closed:Arc::new(AtomicUsize::new(0))},InferRequest {schema_version:1,id:RequestId::default(),prompt:"test".into()},tx).unwrap();
+        supervisor.drive(&spec,Fake {proposal:Some(p.clone()),started:Arc::new(AtomicUsize::new(0)),closed:Arc::new(AtomicUsize::new(0))},InferRequest {schema_version:1,id:RequestId::default(),prompt:"test".into(),context:None},tx).unwrap();
         let event = rx.recv().await.unwrap(); assert!(matches!(event,ProviderEvent::ToolCallComplete {..})); assert_eq!(effects.load(Ordering::SeqCst),0);
         ledger.transition(0,Transition::Propose {run:spec.run,proposal:p.clone()}).await.unwrap();
         let mut broker = Broker::new(ledger.epoch());
@@ -284,7 +284,7 @@ impl Supervisor {
             }
         }).await.map_err(|_|Error::State)?;
         let outcome=match &effect{Ok(r) if r.cancelled=>Outcome::Cancelled,Ok(r) if r.exit_code==Some(0)&&!r.truncated=>Outcome::Succeeded,Ok(_)=>Outcome::Failed,Err(_)=>Outcome::Unknown};
-        let receipt=ExecutionReceipt{schema_version:1,operation,attempt:proposal.attempt,outcome,exit_code:effect.as_ref().ok().and_then(|r|r.exit_code),error:effect.as_ref().err().map(|e|e.kind().into()),artifacts:vec![],before_revision:None,after_revision:None,redacted_output:effect.as_ref().ok().map_or_else(String::new,|r|format!("stdout_sha256={};stderr_sha256={};truncated={}",crate::tools::sha256(r.stdout.as_bytes()),crate::tools::sha256(r.stderr.as_bytes()),r.truncated))};
+        let receipt=ExecutionReceipt{schema_version:1,operation,attempt:proposal.attempt,outcome,exit_code:effect.as_ref().ok().and_then(|r|r.exit_code),error:effect.as_ref().err().map(|e|e.kind().into()),artifacts:vec![],before_revision:None,after_revision:effect.as_ref().ok().map(|r|r.projection_digest.clone()),redacted_output:effect.as_ref().ok().map_or_else(String::new,|r|format!("stdout_sha256={};stderr_sha256={};truncated={}",crate::tools::sha256(r.stdout.as_bytes()),crate::tools::sha256(r.stderr.as_bytes()),r.truncated))};
         let terminal=matches!(receipt.outcome,Outcome::Succeeded|Outcome::Failed);
         ledger.transition(3,Transition::Receipt{receipt}).await?;
         if terminal{ledger.transition(4,Transition::Terminal{operation}).await?;}

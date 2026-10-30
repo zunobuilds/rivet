@@ -147,7 +147,11 @@ impl FileWorkspace {
         }
         if diff.len() > LIMIT { return Err(Error::Unsupported); } Ok(diff)
     }
-    fn sync(dir: &Dir) -> Result<()> { dir.try_clone()?.into_std_file().sync_all()?; Ok(()) }
+    fn sync(dir: &Dir) -> Result<()> {
+        // Capability directories may hold O_PATH descriptors, which cannot fsync.
+        let fd=openat2(dir,".",OFlags::RDONLY|OFlags::DIRECTORY|OFlags::CLOEXEC,rustix::fs::Mode::empty(),ResolveFlags::BENEATH|ResolveFlags::NO_SYMLINKS|ResolveFlags::NO_XDEV).map_err(|_|Error::State)?;
+        std::fs::File::from(fd).sync_all()?;Ok(())
+    }
     fn write(&self, path: &Path, expected: &Option<Revision>, text: &str, stop: &CancellationToken) -> Result<FileResult> {
         if text.len() > LIMIT { return Err(Error::Unsupported); }
         let (dir, name) = self.parent(path)?;
@@ -244,6 +248,13 @@ impl FileWorkspace {
 #[cfg(test)]
 mod boundary_tests {
     use super::*;
+    #[test]
+    fn path_only_capability_can_be_synced_by_reopening_the_same_directory() {
+        let root=tempfile::tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join(".build/tmp")).unwrap();
+        let project=Project::open(root.path()).unwrap();
+        let fd=openat2(&project.dir,".",OFlags::PATH|OFlags::DIRECTORY|OFlags::CLOEXEC,rustix::fs::Mode::empty(),ResolveFlags::BENEATH|ResolveFlags::NO_SYMLINKS|ResolveFlags::NO_XDEV).unwrap();
+        FileWorkspace::sync(&Dir::from_std_file(std::fs::File::from(fd))).unwrap();
+    }
     #[test]
     fn racing_link_target_never_follows_outside_workspace() {
         use std::sync::{Arc, atomic::{AtomicBool, Ordering}};

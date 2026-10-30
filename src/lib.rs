@@ -14,3 +14,8 @@ pub mod supervisor;
 pub mod tools;
 
 mod digest;
+pub mod budget;
+pub mod context;
+pub mod chat;
+pub mod scaffold;
+pub mod terminal;

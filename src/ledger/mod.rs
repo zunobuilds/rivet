@@ -60,6 +60,19 @@ impl StateRoot {
     }
 }
 
+fn backup_v1(root:&StateRoot,source:&Connection)->Result<()> {
+    let name=format!("pre-v2-{}.sqlite",uuid::Uuid::new_v4());
+    let mut options=OpenOptions::new();options.write(true).create_new(true).mode(0o600).custom_flags(0o400000);
+    let file=root.dir.open_with(&name,&options)?.into_std();
+    let path=format!("/proc/self/fd/{}/{}",root.dir.as_raw_fd(),name);
+    let mut destination=Connection::open_with_flags(path,OpenFlags::SQLITE_OPEN_READ_WRITE|OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
+    rusqlite::backup::Backup::new(source,&mut destination)?.run_to_completion(64,Duration::from_millis(2),None)?;
+    let check:String=destination.query_row("PRAGMA quick_check",[],|r|r.get(0))?;
+    if check!="ok"{return Err(Error::State);}
+    check_schema(&destination)?;destination.close().map_err(|_|Error::State)?;
+    file.sync_all()?;root.dir.try_clone()?.into_std_file().sync_all()?;Ok(())
+}
+
 pub fn verify_engine(connection: &Connection) -> Result<String> {
     let version: String = connection.query_row("SELECT sqlite_version()", [], |r| r.get(0))?;
     let parts: Vec<u32> = version.split('.').map(str::parse).collect::<std::result::Result<_, _>>().map_err(|_| Error::State)?;
@@ -73,7 +86,7 @@ fn check_schema(connection: &Connection) -> Result<()> {
         "SELECT schema_version,project_uuid,next_event_sequence,owner_epoch FROM meta", [],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
     let last: i64 = connection.query_row("SELECT coalesce(max(sequence),0) FROM events", [], |r| r.get(0))?;
-    if version != 1 || uuid::Uuid::parse_str(&project).is_err() || epoch < 0 || last.checked_add(1) != Some(next) { return Err(Error::State); }
+    if ![1,2].contains(&version) || uuid::Uuid::parse_str(&project).is_err() || epoch < 0 || last.checked_add(1) != Some(next) { return Err(Error::State); }
     Ok(())
 }
 fn settings(connection: &Connection, writable: bool) -> Result<()> {
@@ -114,6 +127,10 @@ pub enum Transition {
     Dispatched { operation: OperationId },
     Receipt { receipt: ExecutionReceipt },
     Terminal { operation: OperationId },
+    CompleteRun {run:RunId,state:String},
+    InitBudget {run:RunId, limits:crate::budget::BudgetLimits},
+    ReserveInference {run:RunId,request:RequestId,tokens:u64,cost:u64,digest:String,permission_epoch:u64},
+    SettleInference {request:RequestId,usage:Option<(u64,u64)>},
 }
 #[derive(Clone, Debug)]
 pub struct LedgerCommand { pub schema_version: u32, pub owner_epoch: u64, pub expected_revision: u64, pub transition: Transition }
@@ -140,6 +157,8 @@ impl Ledger {
             let check = Connection::open_with_flags(format!("file:{}?immutable=1&mode=ro", root.db_path()), OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
             settings(&check, false)?;
             check_schema(&check)?;
+            let version:u32=check.query_row("SELECT schema_version FROM meta",[],|r|r.get(0))?;
+            if version==1 {backup_v1(&root,&check)?;}
             check.close().map_err(|_| Error::State)?;
         }
         if !existed {
@@ -155,11 +174,18 @@ impl Ledger {
         if !existed {
             let transaction = connection.transaction()?;
             transaction.execute_batch(include_str!("schema.sql"))?;
-            transaction.execute("INSERT INTO meta VALUES(1,?1,1,0)", [ProjectId::default().0.to_string()])?;
+            transaction.execute_batch(include_str!("budget.sql"))?;
+            transaction.execute("INSERT INTO meta VALUES(2,?1,1,0)", [ProjectId::default().0.to_string()])?;
             audit(&transaction, "project", "system", "initialized")?;
             transaction.commit()?;
         }
         let transaction = connection.transaction()?;
+        let version:u32=transaction.query_row("SELECT schema_version FROM meta",[],|r|r.get(0))?;
+        if version==1 {
+            transaction.execute_batch(include_str!("budget.sql"))?;
+            transaction.execute("UPDATE meta SET schema_version=2",[])?;
+            audit(&transaction,"project","system","migrated-v1-v2")?;
+        }
         transaction.execute("UPDATE meta SET owner_epoch=owner_epoch+1", [])?;
         let epoch: u64 = transaction.query_row("SELECT owner_epoch FROM meta", [], |r| r.get::<_, i64>(0))?.try_into().map_err(|_| Error::State)?;
         audit(&transaction, "project", "system", "owner-acquired")?;
@@ -268,6 +294,42 @@ fn apply(connection: &mut Connection, command: LedgerCommand, epoch: u64) -> Res
             tx.execute("UPDATE events SET payload=?1 WHERE sequence=(SELECT next_event_sequence-1 FROM meta)", [payload])?;
         },
         Transition::Terminal { operation } => advance(&tx, operation, revision, "receipt-recorded", "terminal")?,
+        Transition::CompleteRun {run,state}=>{
+            if revision!=0||!["completed","stopped"].contains(&state.as_str()){return Err(Error::Invalid);}
+            let n=tx.execute("UPDATE runs SET state=?1,revision=revision+1 WHERE id=?2 AND state='active' AND revision=0",params![state,run.0.to_string()])?;
+            if n!=1{return Err(Error::Conflict);}audit(&tx,&run.0.to_string(),"supervisor",&format!("run-{state}"))?;
+        },
+        Transition::InitBudget {run,limits}=>{
+            limits.validate()?;if revision!=0{return Err(Error::Conflict);}
+            tx.execute("INSERT INTO run_budgets(run_id,token_limit,request_limit,cost_limit) VALUES(?1,?2,?3,?4)",params![run.0.to_string(),sql_integer(limits.tokens)?,limits.requests,sql_integer(limits.cost_micros)?])?;
+            audit(&tx,&run.0.to_string(),"user","budget-initialized")?;
+        },
+        Transition::ReserveInference {run,request,tokens,cost,digest,permission_epoch}=>{
+            if revision!=0||tokens==0||digest.len()!=64||!digest.bytes().all(|b|b.is_ascii_hexdigit())||permission_epoch==0{return Err(Error::Invalid);}
+            let changed=tx.execute("UPDATE run_budgets SET token_reserved=token_reserved+?1,cost_reserved=cost_reserved+?2,requests=requests+1 WHERE run_id=?3 AND requests<request_limit AND ?1<=token_limit-token_charged-token_reserved AND ?2<=cost_limit-cost_charged-cost_reserved",params![sql_integer(tokens)?,sql_integer(cost)?,run.0.to_string()])?;
+            if changed!=1{return Err(Error::Denied);}
+            tx.execute("INSERT INTO inference_reservations(request_id,run_id,tokens,cost,request_digest,permission_epoch,state) VALUES(?1,?2,?3,?4,?5,?6,'reserved')",params![request.0.to_string(),run.0.to_string(),sql_integer(tokens)?,sql_integer(cost)?,digest,sql_integer(permission_epoch)?])?;
+            audit(&tx,&request.0.to_string(),"supervisor","inference-reserved")?;
+        },
+        Transition::SettleInference {request,usage}=>{
+            if revision!=0{return Err(Error::Conflict);}
+            let (run,tokens,cost,state):(String,i64,i64,String)=tx.query_row("SELECT run_id,tokens,cost,state FROM inference_reservations WHERE request_id=?1",[request.0.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
+            if state!="reserved"{return Err(Error::Conflict);}
+            let tokens:u64=tokens.try_into().map_err(|_|Error::State)?;
+            let cost:u64=cost.try_into().map_err(|_|Error::State)?;
+            match usage {
+                Some((input,output)) if input.checked_add(output).is_some_and(|total|total<=tokens)=>{
+                    // Cost is conservatively charged at its approved upper bound; no invented price/rate.
+                    tx.execute("UPDATE run_budgets SET token_reserved=token_reserved-?1,token_charged=token_charged+?2,cost_reserved=cost_reserved-?3,cost_charged=cost_charged+?3 WHERE run_id=?4",params![sql_integer(tokens)?,sql_integer(input+output)?,sql_integer(cost)?,run])?;
+                    tx.execute("UPDATE inference_reservations SET state='settled',input_tokens=?1,output_tokens=?2 WHERE request_id=?3",params![sql_integer(input)?,sql_integer(output)?,request.0.to_string()])?;
+                    audit(&tx,&request.0.to_string(),"provider","inference-settled")?;
+                },
+                _=>{
+                    tx.execute("UPDATE inference_reservations SET state='unknown' WHERE request_id=?1",[request.0.to_string()])?;
+                    audit(&tx,&request.0.to_string(),"supervisor","inference-usage-unknown")?;
+                }
+            }
+        },
     }
     tx.commit()?; Ok(())
 }
@@ -292,4 +354,26 @@ mod cancellation_tests {
         task.await.unwrap().unwrap();
         assert!(matches!(ledger.transition(0, Transition::NewSession { id: SessionId::default() }).await, Err(Error::Interrupted)));
     }
+}
+
+/// Quiescent session continuation exports only bounded evidence references, never raw transcripts.
+pub fn continuation(project:&Project,path:&Path,session:SessionId)->Result<String>{
+    let root=StateRoot::acquire(project,path,false)?.ok_or(Error::Invalid)?;
+    if root.has_remnants()?{return Err(Error::Recovery);}
+    let connection=Connection::open_with_flags(format!("file:{}?immutable=1&mode=ro",root.db_path()),OpenFlags::SQLITE_OPEN_READ_ONLY|OpenFlags::SQLITE_OPEN_URI|OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
+    settings(&connection,false)?;check_schema(&connection)?;
+    let exists:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1)",[session.0.to_string()],|r|r.get(0))?;
+    if !exists{return Err(Error::Invalid);}
+    let schema:u32=connection.query_row("SELECT schema_version FROM meta",[],|r|r.get(0))?;
+    if schema>=2 {
+        let uncertain:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM inference_reservations i JOIN runs r ON i.run_id=r.id WHERE r.session_id=?1 AND i.state IN ('reserved','unknown'))",[session.0.to_string()],|r|r.get(0))?;
+        if uncertain{return Err(Error::Recovery);}
+    }
+    let uncertain:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM operations o JOIN runs r ON o.run_id=r.id WHERE r.session_id=?1 AND o.state IN ('intent-recorded','dispatched','outcome-unknown','cancelled'))",[session.0.to_string()],|r|r.get(0))?;
+    if uncertain{return Err(Error::Recovery);}
+    let mut statement=connection.prepare("SELECT e.sequence,e.kind,e.payload FROM events e JOIN operations o ON e.entity_id=o.id JOIN runs r ON o.run_id=r.id WHERE r.session_id=?1 AND e.kind IN ('receipt-recorded','cancelled','outcome-unknown') ORDER BY e.sequence DESC LIMIT 8")?;
+    let rows=statement.query_map([session.0.to_string()],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?)))?;
+    let mut output=vec![];
+    for row in rows{let (sequence,kind,payload)=row?;let receipt:ExecutionReceipt=serde_json::from_str(&payload).map_err(|_|Error::State)?;output.push(serde_json::json!({"sequence":sequence,"kind":kind,"operation":receipt.operation,"outcome":receipt.outcome,"before":receipt.before_revision,"after":receipt.after_revision}));}
+    let result=serde_json::to_string(&output).map_err(|_|Error::State)?;if result.len()>8192{return Err(Error::Unsupported);}Ok(result)
 }

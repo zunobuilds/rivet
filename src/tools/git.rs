@@ -162,7 +162,13 @@ pub fn driver()->Result<GitResult>{
 
 impl GitRequest{
     pub fn descriptor()->crate::tools::ToolDescriptor{
-        let schema=serde_json::json!({"type":"object","additionalProperties":false,"required":["action","files"],"properties":{"action":{"type":"object","required":["operation"],"properties":{"operation":{"enum":["status","diff","commit"]}}},"files":{"type":"object","minProperties":1,"maxProperties":1024,"additionalProperties":{"type":"object","required":["text","executable"],"additionalProperties":false,"properties":{"text":{"type":"string"},"executable":{"type":"boolean"},"deleted":{"type":"boolean"}}}}}});
+        let schema=serde_json::json!({"type":"object","additionalProperties":false,"required":["action","files"],"properties":{"action":{"oneOf":[
+            {"type":"object","additionalProperties":false,"required":["operation"],"properties":{"operation":{"const":"status"}}},
+            {"type":"object","additionalProperties":false,"required":["operation"],"properties":{"operation":{"const":"diff"}}},
+            {"type":"object","additionalProperties":false,"required":["operation","expected_head","expected_ref","message","author_name","author_email"],"properties":{
+                "operation":{"const":"commit"},"expected_head":{"type":["string","null"]},"expected_ref":{"type":"string","pattern":"^refs/heads/"},
+                "message":{"type":"string","minLength":1,"maxLength":4096},"author_name":{"type":"string","minLength":1,"maxLength":128},"author_email":{"type":"string","minLength":1,"maxLength":128}
+            }}]},"files":{"type":"object","minProperties":1,"maxProperties":1024,"additionalProperties":{"type":"object","required":["text","executable"],"additionalProperties":false,"properties":{"text":{"type":"string"},"executable":{"type":"boolean"},"deleted":{"type":"boolean"}}}}}});
         crate::tools::ToolDescriptor{id:"rivet:git".into(),version:1,build_digest:DESCRIPTOR.into(),input_schema:schema.to_string(),output_limit:32700,effect:crate::tools::EffectClass::Mutation,permissions:vec!["local-git".into()],platform:"linux".into(),cancellable:true,reconcilable:false}
     }
 }

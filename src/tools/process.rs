@@ -17,7 +17,7 @@ pub struct ProcessRequest {
 #[derive(Debug, Serialize)]
 pub struct ProcessResult {
     pub exit_code: Option<i32>, pub stdout: String, pub stderr: String,
-    pub truncated: bool, pub cancelled: bool, pub elapsed_ms: u64, pub unit: String,
+    pub truncated: bool, pub cancelled: bool, pub elapsed_ms: u64, pub unit: String, pub projection_digest:String,
 }
 impl ProcessRequest {
     pub fn validate(&self) -> Result<()> {
@@ -142,6 +142,7 @@ pub(crate) async fn perform_git(request:ProcessRequest,operation:crate::domain::
 }
 async fn perform_inner(request:ProcessRequest,operation:crate::domain::OperationId,cancel:CancellationToken,git:Option<GitMount>)->Result<ProcessResult>{
     request.validate()?; if cancel.is_cancelled(){return Err(Error::Interrupted);}
+    let projection_digest=crate::tools::sha256(&serde_json::to_vec(&request.files).map_err(|_|Error::Invalid)?);
     let root=Path::new(env!("RIVET_SOURCE_ROOT"));
     let stage=Stage::new(root,operation,&request.files)?;
     let executable=root.join(".build/target/debug/rivet");
@@ -195,7 +196,7 @@ async fn perform_inner(request:ProcessRequest,operation:crate::domain::Operation
     stage.cleanup()?;
     fn bounded(bytes:&[u8])->(String,bool){let mut value=String::from_utf8_lossy(bytes).into_owned();let cut=value.len()>32768;if cut{let mut end=32768;while !value.is_char_boundary(end){end-=1;}value.truncate(end);} (value,cut)}
     let (stdout,out_loss)=bounded(&stdout);let (stderr,err_loss)=bounded(&stderr);
-    Ok(ProcessResult{exit_code:status.code(),stdout,stderr,truncated:out_cut||err_cut||out_loss||err_loss,cancelled:interrupted,elapsed_ms:started.elapsed().as_millis() as u64,unit:name})
+    Ok(ProcessResult{exit_code:status.code(),stdout,stderr,truncated:out_cut||err_cut||out_loss||err_loss,cancelled:interrupted,elapsed_ms:started.elapsed().as_millis() as u64,unit:name,projection_digest})
 }
 /// Single-threaded bootstrap: apply mandatory rules before any untrusted exec.
 pub fn bootstrap(args:&[String],git:Option<bool>)->Result<()> {
