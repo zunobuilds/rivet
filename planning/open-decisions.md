@@ -65,3 +65,25 @@ IDs are local planning identifiers, not the brief's historical question numberin
 No prototype, benchmark, sandbox exercise, live inference, application/desktop test, dependency lock, ABI check, footprint measurement, signing deployment or cross-repository compatibility test was run in either planning stage. P0.6 resolved metadata edges/defaults; runtime claims remain gated. Provider retention/pricing, specialist catalog maintenance/licenses, complete transitive license compatibility and release signing operations are not established. Upstream version/license snapshots need artifact-specific revalidation before use.
 
 The initial commit `6fb21b0` establishes documentation and a local history baseline, not software progress. The brief's old local-development anecdote is historical and no longer describes the inspected Git history; it is retained because this task permits only retiring its first-task instructions, not rewriting its substantive content. Root README guidance is preserved unchanged. See the [research log](research/research-log.md) for access failures, discrepancies and final checks.
+
+
+## Post-P3 decisions and outstanding approvals
+
+This section supersedes conflicting historical D01/D11/D13 and blanket dashboard exclusions above for future planning; it does not change existing code.
+
+| ID | Classification | Disposition / gate |
+| --- | --- | --- |
+| PP01 | Approved product | Solo + Simple default; optional native hierarchies, chat-first hybrid UI and one global Command Center across authorized projects/sessions. Commands/shortcuts/layout are proposals. |
+| PP02 | Approved product | Workspace model C, stable renameable logical groups plus folder discovery; groups are not permission boundaries. |
+| PP03 | Approved product | Recipe/config + pinned references default export, selected complete archive optional. |
+| PP04 | Approved product direction | Official optional Unrivet first; no initial third-party loading; disabled features operationally absent with bytes/settings preserved. Rivet-Bench optional official mod planned. |
+| PP05 | Research direction | One logical integrated Shared Resource Controller; local resources only, remote server resources excluded; safe recovery, deterministic predictor first. Algorithms/metrics/protocol need implementation scope approval. |
+| PP06 | Recommendation, not approved | Independent Git worktrees/branches for concurrent writers, lease/CAS integration and selective inverse diffs. Existing Git lane rejects linked worktrees; future implementation must qualify them explicitly. |
+| PP07 | Recommendation, not approved | AOSP Emulator + AOSP image for app testing; Cuttlefish for platform/headless fallback, Waydroid optional trusted desktop path. Artifact/host/device acquisition gates remain. |
+| PP08 | Recommendation, not selected | GPL-3.0-only for Rivet and compatible official mod code. Owner must select exact license/scope and contribution terms; no LICENSE created. |
+| PP09 | Open owner policy | Recycle Bin retention/caps/privacy, protected-evidence cleanup rules; no fixed duration chosen. |
+| PP10 | Open semantics | Duo session vocabulary versus implemented Pair mode; do not rename/redefine without decision. |
+| PP11 | Open implementation scope | Multi-session project ownership, global IPC/owner lifecycle, model switching/retry policy, tool update policies and exact safe disable/drain behavior. |
+| PP12 | Verification gate | Fresh native P1–P3 worker/Git/Solo/MCP/recovery/detach/hierarchy checks need narrow outside-root host authority; publication remains blocked. |
+
+Detailed proposals and risk/acceptance gates: [post-P3 handoff](POST_P3_HANDOFF.md). No new broad implementation permission follows from this register.

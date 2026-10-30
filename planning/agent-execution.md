@@ -1,5 +1,8 @@
 # Agent execution proposal
 
+**Current authority update (post-P3):** P1–P3 bounded profiles are implemented; [fresh verification](research/post-p3-verification.md) is partial because native host checks were not rerun. P0 statements below about absent implementation/authorization are historical. The [post-P3 brief](POST_P3_RESEARCH_BRIEF.md) supersedes older exclusions of hybrid dashboard/global coordination, approves workspace model C and recipe-first export, and defines official-mod/resource/memory/recovery research boundaries. See [current handoff](POST_P3_HANDOFF.md) and [decisions](open-decisions.md). No P4+ implementation or license adoption is authorized by these plans.
+
+
 **P0.6 authority note:** The [master implementation plan](MASTER_IMPLEMENTATION_PLAN.md) selects the current stack, defaults and contracts; [decision dispositions](open-decisions.md) distinguish owner approvals from technical recommendations. P0.5 comparisons and proposal wording below are retained as research provenance, not competing current defaults. No implementation is authorized.
 
 **Status:** P0.5 design research only. Exact compositions below are approved requirements from the [brief](RIVET_PROJECT_BRIEF.md); ownership, scheduling and budget mechanics are proposals. Component boundaries live in [architecture](architecture.md), recovery rules in [security and recovery](security-and-recovery.md), and unresolved choices in [open decisions](open-decisions.md).

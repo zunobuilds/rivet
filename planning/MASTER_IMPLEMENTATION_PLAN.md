@@ -1,5 +1,8 @@
 # Rivet master implementation plan
 
+**Current authority update (post-P3):** P1–P3 bounded profiles are implemented; [fresh verification](research/post-p3-verification.md) is partial because native host checks were not rerun. P0 statements below about absent implementation/authorization are historical. The [post-P3 brief](POST_P3_RESEARCH_BRIEF.md) supersedes older exclusions of hybrid dashboard/global coordination, approves workspace model C and recipe-first export, and defines official-mod/resource/memory/recovery research boundaries. See [current handoff](POST_P3_HANDOFF.md) and [decisions](open-decisions.md). No P4+ implementation or license adoption is authorized by these plans.
+
+
 Current implementation evidence: [planning index](README.md) and [P2–P3 completion](research/p3c-mesh-adaptive.md). P0 planning-status text below is historical; the bounded P2a–P3c profiles are now implemented and tested. P4 and later are unstarted and require new authorization.
 
 **P0.6 final recommended blueprint — 30 October 2026. No implementation authorized or present.** This document settles the technical recommendations from P0.5; approving a design does not authorize its implementation or external effects. The [brief](RIVET_PROJECT_BRIEF.md) and user instructions remain authoritative product requirements. [Decision dispositions](open-decisions.md) distinguish recommendations, owner choices and evidence gates. [P1 handoff](P1_IMPLEMENTATION_HANDOFF.md) contains the next bounded implementation request, which has not been executed.

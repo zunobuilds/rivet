@@ -1,26 +1,20 @@
 # Rivet planning index
 
-**Current status: P1a foundation implemented in `176bbb77`, with cleanup committed as `090f47c`. P1b tool APIs pass the patch/check/diff/commit fixture; P1c reviewed Solo coding and P1d native profiles/MCP/skills pass synthetic and native fixtures.** The owner has authorized an extended run through P3c in dependency order. This permission waives stage approval/stopping gates only for this run; installations, host changes, live inference, outside-project access and pushes remain forbidden. Completion requires actual stage evidence, not authorization alone.
+Current post-P3 run: [authorized brief](POST_P3_RESEARCH_BRIEF.md), [verification](research/post-p3-verification.md), [handoff and risks](POST_P3_HANDOFF.md). P1–P3 bounded profiles exist; current requalification passes 77 contained tests, with eight native tests unrun under this run's filesystem boundary. Publication is gated; no push was performed. P4+ remains unimplemented.
 
-Current evidence: [P1a implementation](research/p1a-evidence.md) and [extended-run checkpoint/handoff](research/extended-run.md). P2a recovery and P2b bounded lifecycle are qualified; P3a hierarchies are qualified; P3b model policies are qualified; P3c local Mesh/bounded Adaptive is qualified; the file-foundation history is in the extended-run handoff and the newly permitted delegation route is in [P1b runtime evidence](research/p1b-runtime.md). P0.5/P0.6 documents below remain design/history references, not implementation claims. No new push is authorized; historical user-reported pushes do not grant one.
+Historical evidence: [P1a](research/p1a-evidence.md), [P1b](research/p1b-runtime.md), [P1c](research/p1c-solo.md), [P1d](research/p1d-adapters.md), [P2a](research/p2a-acceptance.md), [P2b](research/p2b-lifecycle.md), [P3a](research/p3a-hierarchies.md), [P3b](research/p3b-models.md), [P3c](research/p3c-mesh-adaptive.md). [Bounded qualification](P2_P3_QUALIFICATION.md) supersedes the old mandatory 72-hour gate; optional endurance belongs to P7.
 
-The owner has replaced the mandatory 72-hour gate with the [bounded P2–P3 contract](P2_P3_QUALIFICATION.md); historical evidence below does not reinstate that gate.
+## Post-P3 research
 
-## Current implementation handoff
+- [Android testing and analysis](research/post-p3-android.md)
+- [Product, official mods and hybrid UI](research/post-p3-product-ui.md)
+- [Shared resources and tools](research/post-p3-resources.md)
+- [Workspaces, sessions and coordination](research/post-p3-workspaces.md)
+- [Memory, human edits, Recycle Bin, Git and export](research/post-p3-memory-recovery.md)
+- [License comparison and recommendation](research/post-p3-licensing.md)
+- [Primary sources and access limits](research/post-p3-sources.md)
 
-| Stage | Current result |
-| --- | --- |
-| P1a cleanup | Committed `090f47c`; recovery/cancellation/metadata regressions pass. Rustfmt/Clippy unavailable. |
-| P1b | Bounded tool APIs qualified on this host: descriptor-safe files, cgroup/namespace/Landlock checks/cancellation, selected local Git, patch/check/diff/receipt fixture. See runtime evidence for limits. |
-| P1c | Compatible streamed transport, bounded context/budgets, reviewed terminal Solo loop, continuation and source recipe; synthetic/native evidence in [P1c](research/p1c-solo.md). No live inference tested. |
-| P1d | Synthetic Ollama/Anthropic, scoped rmcp stdio and content-pinned skills; [evidence](research/p1d-adapters.md). No live inference/keyring qualification. |
-| P2a | Schema 4 durable intents/artifacts, explicit reconciliation, fenced bundle restore and bounded crash/full-storage/native-worker tests; [acceptance evidence](research/p2a-acceptance.md). |
-| P2b | Schema 5 durable deadlines/checkpoints/control/resume and explicit same-supervisor detach; [bounded lifecycle evidence](research/p2b-lifecycle.md). Optional endurance is deferred to P7. |
-| P3a | Schema 6 reviewed task graphs, exact roles, fenced scheduling, technical evidence and consented messaging; [qualification](research/p3a-hierarchies.md). |
-| P3b | Schema 7 model/resource policies, qualified-input concurrent streams, serial relay/explicit observations and read-only Cookbook; [evidence](research/p3b-models.md). |
-| P3c | Schema 8 local Mesh claims/conflict escalation and bounded Adaptive selection/versioned transitions; [evidence and limits](research/p3c-mesh-adaptive.md). |
-
-Current handoff: authorized P2a–P3c is complete in the documented bounded profiles. STOP. P4a/browser is the next master stage and needs a new explicit scope; no binary/model/runtime acquisition or push is implied. The owner has authorized these stages for this run; prerequisite checks still apply. The temporary user-systemd qualification route remains narrowly authorized; no installation or general outside-project access is implied.
+Approved decisions, recommendations and unresolved owner choices are separate in [the decision register](open-decisions.md). Research is not implementation approval. Current user-facing commands are documented in [docs](../docs/README.md); historical planning examples may describe future behavior.
 
 ## Implementation entry points
 
@@ -52,4 +46,4 @@ Current handoff: authorized P2a–P3c is complete in the documented bounded prof
 3. Reuse the qualified repository-local `scripts/cargo-contained` route for source fetching and offline checks. Keep Cargo ancestor/home configuration hidden. Source acquisition, tool installation and model/live-provider calls are different permissions. Read the latest extended-run evidence before choosing the next task.
 4. Keep every file/cache/artifact within Rivet unless a later instruction explicitly authorizes a specific exception. Root `/.research-local/` is ignored raw scratch retained locally. Substantive evidence, conclusions, alternatives, decisions and source metadata remain tracked in planning documents.
 5. Preserve historical research; append source access dates/version/license evidence and meaningful log entries. Validate links, decisions, secret exposure and exact diff. A documentation-only check is not an application test.
-6. Follow usage checkpoints and the current owner-approved stage sequence. Commit meaningful milestones and report failed/unrun checks. During the extended run, proceed only after prerequisites pass; stop on genuine blockers or usage thresholds. Outside that run, separate stage approvals/stops still apply. No push is authorized.
+6. Follow usage checkpoints and the current owner-approved stage sequence. Commit meaningful milestones and report failed/unrun checks. During the extended run, proceed only after prerequisites pass; stop on genuine blockers or usage thresholds. Outside that run, separate stage approvals/stops still apply. Future pushes require specific authorization; this run did not satisfy its conditional publication gate.

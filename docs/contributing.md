@@ -1,0 +1,9 @@
+# Contributing
+
+Start with the [repository rules](../AGENTS.md), [master plan](../planning/MASTER_IMPLEMENTATION_PLAN.md) and current [verification](../planning/research/post-p3-verification.md). Keep a proposed change bounded and explain its user-visible result, permission effects and evidence. Licensing and contribution terms remain pending owner decision; do not assume a contribution license or copyright assignment.
+
+Use the [contained checks](building.md). Add regression coverage for meaningful security/recovery changes. Report ignored native tests, unavailable formatter/Clippy and unrun live checks honestly. Do not weaken isolation, silently acquire dependencies or present synthetic inference as model qualification.
+
+A review should include the problem, implementation, actual test results and remaining limits. Stage only related files. Do not rewrite history or push without the specific authorization required by AGENTS.md. Planned features require implementation scope approval; a roadmap entry is not permission.
+
+Documentation should use original wording, evidence-backed claims and valid relative links. Read the [documentation guide](../GITHUB_DOCUMENTATION_GUIDE.md). There is no established response-time promise or private vulnerability route yet; see [security](security.md).
