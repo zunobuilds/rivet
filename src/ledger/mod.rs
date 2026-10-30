@@ -67,8 +67,13 @@ pub fn verify_engine(connection: &Connection) -> Result<String> {
     Ok(version)
 }
 fn check_schema(connection: &Connection) -> Result<()> {
-    let version: u32 = connection.query_row("SELECT schema_version FROM meta", [], |r| r.get(0))?;
-    if version != 1 { return Err(Error::State); }
+    let rows: i64 = connection.query_row("SELECT count(*) FROM meta", [], |r| r.get(0))?;
+    if rows != 1 { return Err(Error::State); }
+    let (version, project, next, epoch): (u32, String, i64, i64) = connection.query_row(
+        "SELECT schema_version,project_uuid,next_event_sequence,owner_epoch FROM meta", [],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+    let last: i64 = connection.query_row("SELECT coalesce(max(sequence),0) FROM events", [], |r| r.get(0))?;
+    if version != 1 || uuid::Uuid::parse_str(&project).is_err() || epoch < 0 || last.checked_add(1) != Some(next) { return Err(Error::State); }
     Ok(())
 }
 fn settings(connection: &Connection, writable: bool) -> Result<()> {
@@ -123,9 +128,10 @@ pub struct Ledger {
 impl Ledger {
     pub fn open(project: &Project, path: &Path) -> Result<Self> {
         let root = StateRoot::acquire(project, path, true)?.ok_or(Error::State)?;
+        // Orphan journals are recovery evidence even when the main DB is absent.
+        if root.has_remnants()? { return Err(Error::Recovery); }
         let existed = root.dir.symlink_metadata(DB).is_ok();
         if existed {
-            if root.has_remnants()? { return Err(Error::Recovery); }
             // Reject unknown schema without even transient WAL/SHM creation.
             let check = Connection::open_with_flags(format!("file:{}?immutable=1&mode=ro", root.db_path()), OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
             settings(&check, false)?;
@@ -190,11 +196,10 @@ impl Ledger {
             _ = self.stop.cancelled() => return Err(Error::Interrupted),
             result = self.tx.send(Pending { command, reply }) => result.map_err(|_| Error::State)?,
         }
-        tokio::select! {
-            biased;
-            result = response => result.map_err(|_| Error::State)?,
-            _ = self.stop.cancelled() => Err(Error::Interrupted),
-        }
+        // Once accepted, await the writer's definitive commit/rollback reply.
+        // Cancellation closes admission and drains queued replies; it cannot erase
+        // an in-flight commit result or imply that a committed effect did not occur.
+        response.await.map_err(|_| Error::State)?
     }
     pub async fn transition(&self, revision: u64, transition: Transition) -> Result<()> {
         self.command(LedgerCommand { schema_version: 1, owner_epoch: self.epoch, expected_revision: revision, transition }).await
@@ -260,3 +265,23 @@ fn apply(connection: &mut Connection, command: LedgerCommand, epoch: u64) -> Res
 }
 
 fn sql_integer(value: u64) -> Result<i64> { value.try_into().map_err(|_| Error::Invalid) }
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+    use std::sync::Arc;
+    #[tokio::test]
+    async fn accepted_command_keeps_definitive_reply_after_cancellation() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let ledger = Arc::new(Ledger { tx, stop: CancellationToken::new(), worker: None, epoch: 1 });
+        let caller = ledger.clone();
+        let task = tokio::spawn(async move { caller.transition(0, Transition::NewSession { id: SessionId::default() }).await });
+        let pending = rx.recv().await.unwrap();
+        ledger.cancellation().cancel();
+        tokio::task::yield_now().await;
+        assert!(!task.is_finished(), "cancellation hid an accepted command's outcome");
+        pending.reply.send(Ok(())).unwrap();
+        task.await.unwrap().unwrap();
+        assert!(matches!(ledger.transition(0, Transition::NewSession { id: SessionId::default() }).await, Err(Error::Interrupted)));
+    }
+}

@@ -123,3 +123,28 @@ fn unsafe_config_and_state_file_links_are_rejected_without_following() {
     assert_eq!(cli(root.path(), &["status"]).status.code(),Some(4));
     assert_eq!(cli(root.path(), &["state","init"]).status.code(),Some(4));
 }
+
+#[test]
+fn orphan_journals_and_corrupt_meta_never_reinitialize_state() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = fixture();
+    assert!(cli(root.path(), &["state", "init"]).status.success());
+    let state = root.path().join(".rivet-state");
+    fs::rename(state.join("ledger.sqlite"), state.join("saved.sqlite")).unwrap();
+    fs::write(state.join("ledger.sqlite-wal"), b"orphan-recovery-evidence").unwrap();
+    fs::set_permissions(state.join("ledger.sqlite-wal"), fs::Permissions::from_mode(0o600)).unwrap();
+    let before = snapshot(root.path());
+    let output = cli(root.path(), &["state", "init"]);
+    assert_eq!(output.status.code(), Some(4));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("recovery"));
+    assert!(snapshot(root.path()) == before);
+    fs::remove_file(state.join("ledger.sqlite-wal")).unwrap();
+    fs::rename(state.join("saved.sqlite"), state.join("ledger.sqlite")).unwrap();
+    let db = rusqlite::Connection::open(state.join("ledger.sqlite")).unwrap();
+    db.execute("UPDATE meta SET next_event_sequence=9000", []).unwrap();
+    drop(db);
+    let before = snapshot(root.path());
+    assert_eq!(cli(root.path(), &["status", "--json"]).status.code(), Some(4));
+    assert_eq!(cli(root.path(), &["state", "init"]).status.code(), Some(4));
+    assert!(snapshot(root.path()) == before);
+}
